@@ -12,7 +12,7 @@ CUDA_LIBS=-L"$(CUDA_INSTALL)/lib64"
 CXXFLAGS=-g -O3 -Wall
 CUDAFLAGS=-g -G -O3 -arch=sm_20 --ptxas-options=-v
 
-PROJECT_PATH=/home/lucky/Workspace/Parallel_Computing/project
+PROJECT_PATH=.
 
 INCLUDE= -I"$(PROJECT_PATH)/include" -I"$(CUDA_INSTALL_PATH)/include"
 SRC_DIR=$(PROJECT_PATH)/src

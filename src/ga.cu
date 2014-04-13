@@ -16,6 +16,12 @@ using namespace std;
 #define TILE_WIDTH 8
 #define POP_SIZE 32
 #define MIGRATION_FREQ 0
+#define DISTANCE_WEIGHT 1
+#define ANGLE_WEIGHT 1
+#define LEFT_WEIGHT 1
+#define RIGHT_WEIGHT 1
+#define UP_WEIGHT 1
+#define DOWN_WEIGHT 1
 
 //Data is as follows:
 //0 - size of each copy of data
@@ -38,39 +44,156 @@ __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
     float rand_float;
     int rand;
 
-    int mem_offset = id * node_layout[0] * 2;
-    //printf("Memory offset: %d, for thread: %d. Layout size: %d, %d\n", mem_offset, id, node_layout[0], node_layout[1]);
-    for (unsigned int i=0; i<node_layout[0] * 2; ++i) {
+    int mem_offset = id * node_layout[0];
+    for (unsigned int i=0; i<node_layout[0]; ++i) {
 	rand_float = curand_uniform(&local_state) * 100; //TODO Depend on num transistors
 	rand = (int) rand_float;
 	pop_mem[mem_offset+i] = rand;
     }
+    //TODO Add contraints
     state[id] = local_state;
+}
+
+/*
+__device__ float single_thread_fitness_func(short *layout, int mem_offset) {
+    //Distance between connected terminals
+    int offset = node_layout[4];
+    int node_offset = 1 + offset + node_data[offset];
+    int dist = 0;
+    int size = 0;
+    int angles = 0;
+    short x[32]; //Will cause errors if any node has more that 32 terminals
+    short y[32]; //Needed because cuda does not allow dynamically sized arrays
+    short t, xdiff, ydiff;
+    for (short i=0; i<node_data[offset]; ++i) {
+        size = node_layout[offset+i+1];
+	for (short j=0; j<size; ++j) {
+	    t = node_layout[node_offset];
+	    x[j] = layout[t-mem_offset];
+	    y[j] = layout[t-mem_offset+1];
+	    for (short k=0; k<j; ++k) {
+		xdiff = x[j] - x[k];
+		ydiff = y[j] - y[k];
+		dist += xdiff * xdiff + ydiff * ydiff;
+
+		//Angles
+		angles += (xdiff == 0) + (ydiff == 0) - 1;
+	    }
+	    ++node_offset;
+	}
+    }
+    angles = angles * ANGLE_WEIGHT;
+    dist = dist * DISTANCE_WEIGHT;
+    int left = 0;
+    int right = 0;
+    int up = 0;
+    int down = 0;
+    int pos = 0;
+    //Inputs to left side
+    for (short i=0; i<node_layout[2]; ++i) {
+	pos = layout[i+4];
+	left += pos * pos * LEFT_WEIGHT;
+    }
+    //Outputs to right side
+    for (short i=0; i<node_layout[3]; ++i) {
+	pos = layout[i+node_layout[2]*2+4] - 10; //TODO Change depend on num transistors
+	right += pos * pos * RIGHT_WEIGHT;
+    }
+    //Power to top
+    pos = layout[1];
+    up = pos * pos * UP_WEIGHT;
+    //Ground to bottom
+    pos = layout[3] - 10;
+    down = pos * pos * DOWN_WEIGHT;
+    printf("Fitness function for thread %d output: %d, %d, %d, %d, %d", dist, left, right, up, down);
+    return dist;
+    }*/
+
+__device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, int id) {
+    //Distance between connected terminals
+    int offset = node_layout[4];
+    int node_offset = 1 + offset + node_layout[offset];
+    int dist = 0;
+    int size = 0;
+    int angles = 0;
+    short x[32]; //Will cause errors if any node has more that 32 terminals
+    short y[32]; //Needed because cuda does not allow dynamically sized arrays
+    short t, xdiff, ydiff;
+    for (short i=0; i<node_layout[offset]; ++i) {
+        size = node_layout[offset+i+1];
+	for (short j=0; j<size; ++j) {
+	    t = node_layout[node_offset];
+	    x[j] = pop_mem[mem_offset+t];
+	    y[j] = pop_mem[mem_offset+t+1];
+	    for (short k=0; k<j; ++k) {
+		xdiff = x[j] - x[k];
+		ydiff = y[j] - y[k];
+		dist += xdiff * xdiff + ydiff * ydiff;
+
+		//Angles
+		angles += (xdiff == 0) + (ydiff == 0) - 1;
+	    }
+	    ++node_offset;
+	}
+    }
+    angles = angles * ANGLE_WEIGHT;
+    dist = dist * DISTANCE_WEIGHT;
+    int left = 0;
+    int right = 0;
+    int up = 0;
+    int down = 0;
+    int pos = 0;
+    //Inputs to left side
+    for (short i=0; i<node_layout[2]; ++i) {
+	pos = pop_mem[mem_offset+i+4];
+	left += pos * pos * LEFT_WEIGHT;
+    }
+    //Outputs to right side
+    for (short i=0; i<node_layout[3]; ++i) {
+	pos = pop_mem[mem_offset+i+node_layout[2]*2+4] - 10; //TODO Change depend on num transistors
+	right += pos * pos * RIGHT_WEIGHT;
+    }
+    //Power to top
+    pos = pop_mem[mem_offset+1];
+    up = pos * pos * UP_WEIGHT;
+    //Ground to bottom
+    pos = pop_mem[mem_offset+3] - 10;
+    down = pos * pos * DOWN_WEIGHT;
+    printf("Fitness function for thread %d output: %d, %d, %d, %d, %d", dist, left, right, up, down);
+    return dist;
 }
 
 __global__ void ga_fitness_kernel(short *pop_mem, float *fit_mem) {
     __shared__ float fit_scores[TILE_WIDTH];
     int id = blockIdx.x*blockDim.x + threadIdx.x;
-
-    int mem_offset = id * node_layout[1];
+    int mem_offset = id * node_layout[0];
+    //Makes local copy, might be faster to not copy
+/*
+    short layout[size];
+    for (int i=0; i<node_layout[0]; ++i) {
+	layout[i] = pop_mem[mem_offset + i];
+    }
+    fit_scores[threadIdx.x] = single_thread_fitness_func(layout, mem_offset);
+*/
+    fit_scores[threadIdx.x] = single_thread_fitness_func_mem(pop_mem, mem_offset, id);
 }
 
 int term_pos(Terminal *term, int offset_data, int offset_in, int offset_out) {
     switch(term->type) {
     case 'D':
-	return 2 + offset_data + offset_in + offset_out + (term->num - 1) * 3; //Order D-G-S
+	return 2 + offset_in + offset_out + (term->num - 1) * 3; //Order D-G-S
     case 'G':
-	return 3 + offset_data + offset_in + offset_out + (term->num - 1) * 3;
+	return 3 + offset_in + offset_out + (term->num - 1) * 3;
     case 'S':
-	return 4 + offset_data + offset_in + offset_out + (term->num - 1) * 3;
+	return 4 + offset_in + offset_out + (term->num - 1) * 3;
     case 'P':
-	return offset_data; //Always first
+	return 0; //Always first
     case 'Z':
-	return offset_data + 1; //Always second
+	return 1; //Always second
     case 'I':
-	return 1 + offset_data + term->num; //Directly follows ground, term num starts at 1, so only offset 1
+	return 1 + term->num; //Directly follows ground, term num starts at 1, so only offset 1
     case 'O':
-	return 1 + offset_data + offset_in + term->num; // Follows inputs
+	return 1 + offset_in + term->num; // Follows inputs
     default:
 	cout << "Improper terminal" << endl;
 	return -1;
@@ -128,12 +251,15 @@ void launch_ga(Layout *main_layout) {
 	size += node->terms.size();
     }
 
-    int offset_data = 2;
+    int offset_data = 5;
     int node_mem_size = 1 + main_layout->nodes_size() + size + offset_data;
     short node_data[node_mem_size];
 
-    node_data[0] = (trans_offset + num_terminals);
+    node_data[0] = (trans_offset + num_terminals) * 2;
     node_data[1] = per_copy_size;
+    node_data[2] = offset_in;
+    node_data[3] = offset_out;
+    node_data[4] = offset_data;
 
     cout << "Node size: " << node_mem_size << " numbers" << endl;
     cout << "Node memory use: " << node_mem_size * sizeof(short) << " bytes" << endl;
@@ -169,15 +295,8 @@ void launch_ga(Layout *main_layout) {
     cudaMemcpy(host_pop, pop_mem, total_mem, cudaMemcpyDeviceToHost);
 
 
-    cout << "Population: " << endl;
-    for (unsigned int i=0; i<(trans_offset + num_terminals) * POP_SIZE; ++i) {
-	cout << "(" << host_pop[i*2] << ", " << host_pop[i*2+1] << ") ";
-	if ((i + 1) % (trans_offset + num_terminals)  == 0) {
-	    cout << endl << endl;
-	}
-	}
-
-
+    free(host_pop);
+    
     cudaFree(pop_mem);
     cudaFree(fit_mem);
     cudaFree(run_num);
