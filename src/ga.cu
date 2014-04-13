@@ -159,7 +159,17 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     //Ground to bottom
     pos = pop_mem[mem_offset+3] - 10;
     down = pos * pos * DOWN_WEIGHT;
-    printf("Fitness function for thread %d output: %d, %d, %d, %d, %d", dist, left, right, up, down);
+    //Print some useful info
+    if (id == 0)
+    {
+	printf("Thread 0\n");
+	printf("Layout dump: [");
+	for (int i=0; i<node_layout[0]; ++i) {
+	    printf("(%d, %d)", pop_mem[mem_offset+i], pop_mem[mem_offset+i]);
+	}
+	printf("]\n");
+	printf("Fitness function for thread %d output: %d, %d, %d, %d, %d\n", id, dist, left, right, up, down);
+    }
     return dist;
 }
 
