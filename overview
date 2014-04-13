@@ -1,0 +1,47 @@
+
+Place transistors in best fashion
+
+Drawing Canvas
+Map System
+Genetic Algorithm
+
+Fitness Function:
+Parameters:
+Distance between connected terminals - minimize
+Number of turns/angles in wire - minimize
+Distance between inputs and left side - minimize
+Distance between outputs and right side - minimize
+Distance between power and upper side - minimize
+Distance between ground and lower side - minimize
+
+Heuristic Improvements:
+Aligning transistors
+Perserving gates
+Minimum distance between transistors
+
+Mutations:
+Moving transistors
+
+How to combine layouts?
+Parents with high fitness function score combine. Areas of layout with high scores are kept?
+
+
+Constraints:
+Minimum distance between terminals
+Transistor terminals must be aligned properly
+
+
+Implementation:
+Blocks - Islands
+Threads - Individuals
+
+Individuals only interact with others on same island (block). Shared memory should be used. Maybe include
+migration from Island to Island?
+
+Genetic Algorithm Order:
+Parents
+Evaluation - Determining best individuals based on fitness function
+Selectrion - Order individuals and select best ones
+Crossover - Create new individuals from parents
+Mutation - Create new individuals by changing single individuals
+Offspring become parents
