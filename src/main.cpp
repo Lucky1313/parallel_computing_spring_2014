@@ -6,6 +6,7 @@
 
 #include "layout.h"
 #include "ga.h"
+#include "utils.h"
 
 using namespace std;
 
