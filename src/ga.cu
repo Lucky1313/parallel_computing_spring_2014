@@ -54,61 +54,6 @@ __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
     state[id] = local_state;
 }
 
-/*
-__device__ float single_thread_fitness_func(short *layout, int mem_offset) {
-    //Distance between connected terminals
-    int offset = node_layout[4];
-    int node_offset = 1 + offset + node_data[offset];
-    int dist = 0;
-    int size = 0;
-    int angles = 0;
-    short x[32]; //Will cause errors if any node has more that 32 terminals
-    short y[32]; //Needed because cuda does not allow dynamically sized arrays
-    short t, xdiff, ydiff;
-    for (short i=0; i<node_data[offset]; ++i) {
-        size = node_layout[offset+i+1];
-	for (short j=0; j<size; ++j) {
-	    t = node_layout[node_offset];
-	    x[j] = layout[t-mem_offset];
-	    y[j] = layout[t-mem_offset+1];
-	    for (short k=0; k<j; ++k) {
-		xdiff = x[j] - x[k];
-		ydiff = y[j] - y[k];
-		dist += xdiff * xdiff + ydiff * ydiff;
-
-		//Angles
-		angles += (xdiff == 0) + (ydiff == 0) - 1;
-	    }
-	    ++node_offset;
-	}
-    }
-    angles = angles * ANGLE_WEIGHT;
-    dist = dist * DISTANCE_WEIGHT;
-    int left = 0;
-    int right = 0;
-    int up = 0;
-    int down = 0;
-    int pos = 0;
-    //Inputs to left side
-    for (short i=0; i<node_layout[2]; ++i) {
-	pos = layout[i+4];
-	left += pos * pos * LEFT_WEIGHT;
-    }
-    //Outputs to right side
-    for (short i=0; i<node_layout[3]; ++i) {
-	pos = layout[i+node_layout[2]*2+4] - 10; //TODO Change depend on num transistors
-	right += pos * pos * RIGHT_WEIGHT;
-    }
-    //Power to top
-    pos = layout[1];
-    up = pos * pos * UP_WEIGHT;
-    //Ground to bottom
-    pos = layout[3] - 10;
-    down = pos * pos * DOWN_WEIGHT;
-    printf("Fitness function for thread %d output: %d, %d, %d, %d, %d", dist, left, right, up, down);
-    return dist;
-    }*/
-
 __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, int id) {
     //Distance between connected terminals
     int offset = node_layout[4];
@@ -165,27 +110,22 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
 	printf("Thread 0\n");
 	printf("Layout dump: [");
 	for (int i=0; i<node_layout[0]/2; ++i) {
-	    printf("(%d, %d)", pop_mem[mem_offset+i], pop_mem[mem_offset+i+1]);
+	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
 	}
 	printf("]\n");
 	printf("Fitness function for thread %d output: %d, %d, %d, %d, %d\n", id, dist, left, right, up, down);
     }
-    return dist;
+    return dist + left + right + up + down;
 }
 
 __global__ void ga_fitness_kernel(short *pop_mem, float *fit_mem) {
     __shared__ float fit_scores[TILE_WIDTH];
     int id = blockIdx.x*blockDim.x + threadIdx.x;
     int mem_offset = id * node_layout[0];
-    //Makes local copy, might be faster to not copy
-/*
-    short layout[size];
-    for (int i=0; i<node_layout[0]; ++i) {
-	layout[i] = pop_mem[mem_offset + i];
-    }
-    fit_scores[threadIdx.x] = single_thread_fitness_func(layout, mem_offset);
-*/
+    
     fit_scores[threadIdx.x] = single_thread_fitness_func_mem(pop_mem, mem_offset, id);
+    //__shared__ float fit_temp[TILE_WIDTH];
+    //radix_sort(fit_temp, fit_scores, TILE_WIDTH);
 }
 
 int term_pos(Terminal *term, int offset_data, int offset_in, int offset_out) {

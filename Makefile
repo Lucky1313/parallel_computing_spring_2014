@@ -19,7 +19,7 @@ SRC_DIR=$(PROJECT_PATH)/src
 BUILD_DIR=$(PROJECT_PATH)/build
 
 CPP_SRCS=$(wildcard $(SRC_DIR)/*.cpp)
-CU_SRCS=$(wildcard $(SRC_DIR)/ga.cu)
+CU_SRCS=$(wildcard $(SRC_DIR)/*.cu)
 
 CPP_OBJS=$(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%.o, $(CPP_SRCS))
 CU_OBJS=$(patsubst $(SRC_DIR)/%.cu, $(BUILD_DIR)/%.o, $(CU_SRCS))
