@@ -49,30 +49,47 @@ __device__ void min_func(short *data, short *temp, short *out) {
     }
 }
 
+
 __device__ void block_scan(int *data) {
-    unsigned int tid = threadIdx.x;
-    for (unsigned int d=1; d<blockDim.x; d*=2) {
-	if (tid > d) {
-	    data[tid] = data[tid - d] + data[tid];
+	unsigned int tid = threadIdx.x;
+	for (unsigned int d = 1; d<blockDim.x; d<<=1) {
+		if ((tid + 1) % (d<<1) == 0) {
+			data[tid] = data[tid] + data[tid - d];
+		}
+	}
+
+	if (tid==blockDim.x-1) {
+		data[tid] = 0;
 	}
 	__syncthreads();
-    }
+	int tmp;
+	for (unsigned int d = blockDim.x>>1; d >= 1; d>>=1) {
+		if ((tid + 1) % (d<<1) == 0) {
+			tmp = data[tid - d];
+			data[tid - d] = data[tid];
+			data[tid] = tmp + data[tid];
+		}
+	}
+	__syncthreads();
 }
 
 //Lot of syncing threads...
 __device__ void radix_sort(int *data, int *temp1, int *temp2) {
     unsigned int tid = threadIdx.x;
     unsigned int total = 0;
+    unsigned int b = 0;
     for (unsigned int k=0; k<sizeof(int)*8; ++k) {
-	temp1[tid] = (data[tid] & (1 << k)) == 0; //Actually opposite of bit
-	temp2[tid] = temp1[tid];
+    b = (data[tid] & (1 << k)) == 0; //Actually opposite of bit
+	temp1[tid] = b;
+	temp2[tid] = b;
 	__syncthreads();
-	block_scan(temp2);
-	total = temp2[blockDim.x-1] + temp1[blockDim.x-1];
-	temp1[tid] = tid - temp2[tid] + total;
+	block_scan(temp1);
+	total = temp1[blockDim.x-1] + temp2[blockDim.x-1];
+	temp2[tid] = tid - temp1[tid] + total;
+	temp1[tid] = b ? temp1[tid] : temp2[tid];
+	int tmp = data[tid];
 	__syncthreads();
-	temp2[tid] = data[temp1[tid]];
-	data[tid] = temp2[tid];
+	data[temp1[tid]] = tmp;
 	__syncthreads();
     }
 }
@@ -105,11 +122,21 @@ __global__ void test_kernel(int *test_int_data, short *test_short_data) {
 	printf("]\n");
     }
     __syncthreads();
+    temp_int_1[tid] = tid;
+    block_scan(temp_int_1);
+    if (tid == 0) {
+	printf("Block scan: [");
+	for (unsigned int i=0; i<64; ++i) {
+	    printf("%d, ", temp_int_1[i]);
+	}
+	printf("]\n");
+    }
+    __syncthreads();
     radix_sort(test_int, temp_int_1, temp_int_2);
     if (tid == 0) {
 	printf("Radix Sort: [");
 	for (unsigned int i=0; i<64; ++i) {
-	    printf("%d, ", temp_int_1[i]);
+	    printf("%d, ", test_int[i]);
 	}
 	printf("]\n");
     }

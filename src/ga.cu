@@ -119,14 +119,32 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     return dist + left + right + up + down;
 }
 
-__global__ void ga_fitness_kernel(short *pop_mem, float *fit_mem) {
-    __shared__ float fit_scores[TILE_WIDTH];
+__global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
+    __shared__ int fit_scores[TILE_WIDTH];
     int id = blockIdx.x*blockDim.x + threadIdx.x;
     int mem_offset = id * node_layout[0];
     
     fit_scores[threadIdx.x] = single_thread_fitness_func_mem(pop_mem, mem_offset, id);
-    //__shared__ float fit_temp[TILE_WIDTH];
-    //radix_sort(fit_temp, fit_scores, TILE_WIDTH);
+
+    if (id == 0) {
+        printf("Fitness_func: [");
+        for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+        	printf("%d, ", fit_scores[i]);
+        }
+        printf("]\n");
+    }
+
+    __shared__ int fit_temp1[TILE_WIDTH];
+    __shared__ int fit_temp2[TILE_WIDTH];
+    radix_sort(fit_scores, fit_temp1, fit_temp2);
+
+    if (id == 0) {
+    	printf("Fitness_func: [");
+    	for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+    		printf("%d, ", fit_scores[i]);
+    	}
+    	printf("]\n");
+    }
 }
 
 int term_pos(Terminal *term, int offset_data, int offset_in, int offset_out) {
@@ -224,12 +242,12 @@ void launch_ga(Layout *main_layout) {
 
     short *pop_mem = 0;
     //short *node_mem = 0;
-    float *fit_mem = 0;
+    int *fit_mem = 0;
     short *run_num = 0;
 
     cudaMalloc((void**)&pop_mem, total_mem);
     //cudaMalloc((void**)&node_mem, node_mem_size * sizeof(short));
-    cudaMalloc((void**)&fit_mem, thread_count * sizeof(float));
+    cudaMalloc((void**)&fit_mem, thread_count * sizeof(int));
     cudaMalloc((void**)&run_num, sizeof(short));
 
     //cudaMemcpy(node_mem, node_data, node_mem_size * sizeof(short), cudaMemcpyHostToDevice);
@@ -244,7 +262,7 @@ void launch_ga(Layout *main_layout) {
     host_pop = (short*)malloc(total_mem);
 
     cudaMemcpy(host_pop, pop_mem, total_mem, cudaMemcpyDeviceToHost);
-
+/*
     cout << "Util test kernel" << endl;
     int test_int[64] = {38, 56, 41, 0, 43, 51, 18, 45, 34, 63, 37, 54, 1, 59, 32, 28, 40, 42, 17, 7, 22, 25, 8, 36, 4, 12, 23, 35, 29, 44, 52, 31, 26, 16, 15, 14, 33, 48, 5, 53, 2, 11, 24, 62, 20, 30, 39, 27, 3, 61, 47, 6, 19, 50, 55, 13, 58, 46, 9, 49, 21, 10, 60, 57};
     short test_short[64] = {38, 56, 41, 0, 43, 51, 18, 45, 34, 63, 37, 54, 1, 59, 32, 28, 40, 42, 17, 7, 22, 25, 8, 36, 4, 12, 23, 35, 29, 44, 52, 31, 26, 16, 15, 14, 33, 48, 5, 53, 2, 11, 24, 62, 20, 30, 39, 27, 3, 61, 47, 6, 19, 50, 55, 13, 58, 46, 9, 49, 21, 10, 60, 57};
@@ -258,7 +276,7 @@ void launch_ga(Layout *main_layout) {
     cudaMemcpy(test_short_data, test_short, 64*sizeof(short), cudaMemcpyHostToDevice);
     
     test_kernel<<<1, 64>>>(test_int_data, test_short_data);
-
+*/
     free(host_pop);
     
     cudaFree(pop_mem);

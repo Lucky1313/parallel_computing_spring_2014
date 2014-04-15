@@ -10,7 +10,7 @@ CUDA=$(CUDA_INSTALL_PATH)/bin/nvcc
 CUDA_LIBS=-L"$(CUDA_INSTALL)/lib64"
 
 CXXFLAGS=-g -O3 -Wall
-CUDAFLAGS=-g -G -O3 -arch=sm_20 --ptxas-options=-v
+CUDAFLAGS=-g -G -O3 -arch=sm_20 --ptxas-options=-v -rdc=true
 
 PROJECT_PATH=.
 
@@ -33,7 +33,7 @@ $(BUILD_DIR)/%.o : $(SRC_DIR)/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDE) -o $@ -c $<
 
 $(BUILD_DIR)/$(BIN) : $(CPP_OBJS) $(CU_OBJS)
-	$(CUDA) -o $(BUILD_DIR)/$(BIN) $(CU_OBJS) $(CPP_OBJS) $(INCLUDE) $(CUDA_LIBS)
+	$(CUDA) $(CUDAFLAGS) -o $(BUILD_DIR)/$(BIN) $(CU_OBJS) $(CPP_OBJS) $(INCLUDE) $(CUDA_LIBS)
 
 clean:
 	$(RM) $(BUILD_DIR)/$(BIN) $(BUILD_DIR)/*.o $(BUILD_DIR)/*.cu_o
