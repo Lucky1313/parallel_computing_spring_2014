@@ -133,6 +133,10 @@ __global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
         for (unsigned int i=0; i<TILE_WIDTH; ++i) {
 	    printf("%d, ", fit_scores[i]);
         }
+        printf("]\nPositions: [");
+        for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+        	printf("%d, ", scores_id[i]);
+        }
         printf("]\n");
     }
 
@@ -147,7 +151,7 @@ __global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
     	}
     	printf("]\nPositions: [");
 	for (unsigned int i=0; i<TILE_WIDTH; ++i) {
-	    printf("%d, ", fit_scores[i]);
+	    printf("%d, ", scores_id[i]);
 	}
 	printf("]\n");
     }
