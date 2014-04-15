@@ -73,20 +73,19 @@ __device__ void block_scan(int *data) {
 	__syncthreads();
 }
 
-//Lot of syncing threads...
 __device__ void radix_sort(int *data, int *temp1, int *temp2) {
     unsigned int tid = threadIdx.x;
     unsigned int total = 0;
     unsigned int b = 0;
     for (unsigned int k=0; k<sizeof(int)*8; ++k) {
-    b = (data[tid] & (1 << k)) == 0; //Actually opposite of bit
+	b = (data[tid] & (1 << k)) == 0; //Actually opposite of bit
 	temp1[tid] = b;
 	temp2[tid] = b;
 	__syncthreads();
 	block_scan(temp1);
 	total = temp1[blockDim.x-1] + temp2[blockDim.x-1];
 	temp2[tid] = tid - temp1[tid] + total;
-	temp1[tid] = b ? temp1[tid] : temp2[tid];
+	temp1[tid] = b ? temp1[tid] : temp2[tid]; //Inverse of nvidia radix, account for b being !bit
 	int tmp = data[tid];
 	__syncthreads();
 	data[temp1[tid]] = tmp;
