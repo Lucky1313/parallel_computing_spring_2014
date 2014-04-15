@@ -10,6 +10,7 @@
 #include <curand_kernel.h>
 
 #include "layout.h"
+#include "utils.h"
 
 using namespace std;
 
@@ -245,16 +246,16 @@ void launch_ga(Layout *main_layout) {
     cudaMemcpy(host_pop, pop_mem, total_mem, cudaMemcpyDeviceToHost);
 
     cout << "Util test kernel" << endl;
-    int test_int = {38, 56, 41, 0, 43, 51, 18, 45, 34, 63, 37, 54, 1, 59, 32, 28, 40, 42, 17, 7, 22, 25, 8, 36, 4, 12, 23, 35, 29, 44, 52, 31, 26, 16, 15, 14, 33, 48, 5, 53, 2, 11, 24, 62, 20, 30, 39, 27, 3, 61, 47, 6, 19, 50, 55, 13, 58, 46, 9, 49, 21, 10, 60, 57};
-    short test_short = {38, 56, 41, 0, 43, 51, 18, 45, 34, 63, 37, 54, 1, 59, 32, 28, 40, 42, 17, 7, 22, 25, 8, 36, 4, 12, 23, 35, 29, 44, 52, 31, 26, 16, 15, 14, 33, 48, 5, 53, 2, 11, 24, 62, 20, 30, 39, 27, 3, 61, 47, 6, 19, 50, 55, 13, 58, 46, 9, 49, 21, 10, 60, 57};
+    int test_int[64] = {38, 56, 41, 0, 43, 51, 18, 45, 34, 63, 37, 54, 1, 59, 32, 28, 40, 42, 17, 7, 22, 25, 8, 36, 4, 12, 23, 35, 29, 44, 52, 31, 26, 16, 15, 14, 33, 48, 5, 53, 2, 11, 24, 62, 20, 30, 39, 27, 3, 61, 47, 6, 19, 50, 55, 13, 58, 46, 9, 49, 21, 10, 60, 57};
+    short test_short[64] = {38, 56, 41, 0, 43, 51, 18, 45, 34, 63, 37, 54, 1, 59, 32, 28, 40, 42, 17, 7, 22, 25, 8, 36, 4, 12, 23, 35, 29, 44, 52, 31, 26, 16, 15, 14, 33, 48, 5, 53, 2, 11, 24, 62, 20, 30, 39, 27, 3, 61, 47, 6, 19, 50, 55, 13, 58, 46, 9, 49, 21, 10, 60, 57};
 
     int *test_int_data = 0;
     short *test_short_data = 0;
     cudaMalloc((void**)&test_int_data, 64*sizeof(int));
     cudaMalloc((void**)&test_short_data, 64*sizeof(short));
 
-    cudaMemcpy(test_int_data, test_int, 64*sizeof(int));
-    cudaMemcpy(test_short_data, test_short, 64*sizeof(short));
+    cudaMemcpy(test_int_data, test_int, 64*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(test_short_data, test_short, 64*sizeof(short), cudaMemcpyHostToDevice);
     
     test_kernel<<<1, 64>>>(test_int_data, test_short_data);
 
