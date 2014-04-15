@@ -93,6 +93,28 @@ __device__ void radix_sort(int *data, int *temp1, int *temp2) {
     }
 }
 
+__device__ void radix_sort_by_key(int *keys, int *data, int *temp1, int *temp2) {
+    unsigned int tid = threadIdx.x;
+    unsigned int total = 0;
+    unsigned int b = 0;
+    for (unsigned int k=0; k<sizeof(int)*8; ++k) {
+	b = (keys[tid] & (1 << k)) == 0; //Actually opposite of bit
+	temp1[tid] = b;
+	temp2[tid] = b;
+	__syncthreads();
+	block_scan(temp1);
+	total = temp1[blockDim.x-1] + temp2[blockDim.x-1];
+	temp2[tid] = tid - temp1[tid] + total;
+	temp1[tid] = b ? temp1[tid] : temp2[tid]; //Inverse of nvidia radix, account for b being !bit
+	int tmp_data = data[tid];
+	int tmp_key = keys[tid];
+	__syncthreads();
+	data[temp1[tid]] = tmp_data;
+	keys[temp1[tid]] = tmp_key;
+	__syncthreads();
+    }
+}
+
 __global__ void test_kernel(int *test_int_data, short *test_short_data) {
     //Need blockdim of 64, one block
     __shared__ int test_int[64];
@@ -140,3 +162,4 @@ __global__ void test_kernel(int *test_int_data, short *test_short_data) {
 	printf("]\n");
     }
 }
+

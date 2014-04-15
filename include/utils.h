@@ -10,6 +10,8 @@ __device__ void block_scan(int *data);
 
 __device__ void radix_sort(int *data, int *temp1, int *temp2);
 
+__device__ void radix_sort_by_key(int *keys, int *data, int *temp1, int *temp2);
+
 __global__ void test_kernel(int *test_int_data, short *test_short_data);
 
 #endif

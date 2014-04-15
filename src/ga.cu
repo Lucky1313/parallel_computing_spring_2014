@@ -121,29 +121,35 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
 
 __global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
     __shared__ int fit_scores[TILE_WIDTH];
+    __shared__ int scores_id[TILE_WIDTH];
     int id = blockIdx.x*blockDim.x + threadIdx.x;
     int mem_offset = id * node_layout[0];
     
     fit_scores[threadIdx.x] = single_thread_fitness_func_mem(pop_mem, mem_offset, id);
-
+    scores_id[threadIdx.x] = threadIdx.x;
+    
     if (id == 0) {
         printf("Fitness_func: [");
         for (unsigned int i=0; i<TILE_WIDTH; ++i) {
-        	printf("%d, ", fit_scores[i]);
+	    printf("%d, ", fit_scores[i]);
         }
         printf("]\n");
     }
 
     __shared__ int fit_temp1[TILE_WIDTH];
     __shared__ int fit_temp2[TILE_WIDTH];
-    radix_sort(fit_scores, fit_temp1, fit_temp2);
+    radix_sort_by_key(fit_scores, scores_id, fit_temp1, fit_temp2);
 
     if (id == 0) {
     	printf("Fitness_func: [");
     	for (unsigned int i=0; i<TILE_WIDTH; ++i) {
-    		printf("%d, ", fit_scores[i]);
+    	    printf("%d, ", fit_scores[i]);
     	}
-    	printf("]\n");
+    	printf("]\nPositions: [");
+	for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+	    printf("%d, ", fit_scores[i]);
+	}
+	printf("]\n");
     }
 }
 
