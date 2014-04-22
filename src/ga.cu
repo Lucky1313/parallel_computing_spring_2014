@@ -14,8 +14,8 @@
 
 using namespace std;
 
-#define TILE_WIDTH 8
-#define POP_SIZE 32
+#define TILE_WIDTH 16
+#define POP_SIZE 64
 #define MIGRATION_FREQ 0
 #define DISTANCE_WEIGHT 1
 #define ANGLE_WEIGHT 1
@@ -34,6 +34,11 @@ using namespace std;
 //TERMINALS - Always D-G-S
 __constant__ short node_layout[32000];
 
+//Probably a problem with pointers
+__device__ int rand_int(curandState state, int range) {
+    return (int) (curand_uniform(&state)) * range);
+}
+
 __global__ void rand_setup_kernel(curandState *state) {
     int id = blockIdx.x*blockDim.x + threadIdx.x;
     curand_init(7+id, id, 0, &state[id]);
@@ -46,12 +51,38 @@ __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
     int rand;
 
     int mem_offset = id * node_layout[0];
-    for (unsigned int i=0; i<node_layout[0]; ++i) {
-	rand_float = curand_uniform(&local_state) * 10; //TODO Depend on num transistors
-	rand = (int) rand_float;
-	pop_mem[mem_offset+i] = rand;
+
+    pop_mem[mem_offset] = rand_int(local_state, node_layout[0] / 2);
+    pop_mem[mem_offset+1] = 0;
+    pop_mem[mem_offset+2] = rand_int(local_state, node_layout[0] / 2);
+    pop_mem[mem_offset+3] = node_layout[0] / 2;
+
+    int off = 4;
+    for (unsigned int i=0; i<node_layout[2]; ++i) {
+	pop_mem[mem_offset+2*i+off] = 0;
+	pop_mem[mem_offset+2*i+off+1] = rand_int(local_state, node_layout[0] / 2);
     }
-    //TODO Add contraints
+    off += node_layout[2] * 2;
+    for (unsigned int i=0; i<node_layout[3]; ++i) {
+	pop_mem[mem_offset+2*i+off] = node_layout[0] / 2;
+	pop_mem[mem_offset+2*i+off+1] = rand_int(local_state, node_layout[0] / 2);
+    }
+    off += node_layout[3] * 2;
+    for (unsigned int i=off; i<node_layout[0]; i+=2) {
+	if ((i - off) % 3 == 0) {
+	    pop_mem[mem_offset+i] = rand_int(local_state, node_layout[0] / 2);
+	    
+	    pop_mem[mem_offset+i+1] = rand_int(local_state, node_layout[0] / 2);
+	}
+	else if ((i - off) % 3 == 1) {
+	    pop_mem[mem_offset+i] = pop_mem[mem_offset+i-2] - 1;
+	    pop_mem[mem_offset+i+1] = pop_mem[mem_offset+i-1] + 1;
+	}
+	else {
+	    pop_mem[mem_offset+i] = pop_mem[mem_offset+i-4];
+	    pop_mem[mem_offset+i+1] = pop_mem[mem_offset+i-3] + 2;
+	}
+    }
     state[id] = local_state;
 }
 
@@ -84,6 +115,7 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     }
     angles = angles * ANGLE_WEIGHT;
     dist = dist * DISTANCE_WEIGHT;
+    /*
     int left = 0;
     int right = 0;
     int up = 0;
@@ -105,6 +137,7 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     //Ground to bottom
     pos = pop_mem[mem_offset+3] - 10;
     down = pos * pos * DOWN_WEIGHT;
+    */
     //Print some useful info
     if (id == 0)
     {
@@ -114,9 +147,11 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
 	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
 	}
 	printf("]\n");
-	printf("Fitness function for thread %d output: %d, %d, %d, %d, %d\n", id, dist, left, right, up, down);
+	//printf("Fitness function for thread %d output: %d, %d, %d, %d, %d\n", id, dist, left, right, up, down);
+	printf("Fitness function for thread %d: %d\n", id, dist);
     }
-    return dist + left + right + up + down;
+    //return dist + left + right + up + down;
+    return dist;
 }
 
 __global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
@@ -155,6 +190,21 @@ __global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
 	}
 	printf("]\n");
     }
+
+    //Crossover
+    //Number of crossovers is POP/4
+    //8 threads per crossover
+    int num_cross = POP_SIZE>>2;
+    
+
+    //Mutation
+    //Number of mutations is POP/32
+    //32 threads per mutation
+    int num_mut = POP_SIZE>>5;
+}
+
+__global__ void ga_migration_kernel(short *pop_mem) {
+
 }
 
 int term_pos(Terminal *term, int offset_data, int offset_in, int offset_out) {
@@ -266,8 +316,12 @@ void launch_ga(Layout *main_layout) {
 
     ga_populate_kernel<<<num_blocks, block_size>>>(rand_states, pop_mem);
 
-    ga_fitness_kernel<<<num_blocks, block_size>>>(pop_mem, fit_mem);
-
+    for (int i=0; i<NUM_GEN; ++i) {
+	ga_fitness_kernel<<<num_blocks, block_size>>>(pop_mem, fit_mem);
+	if (i % 10 == 0) {
+	    ga_migration_kernel<<<num_blocks, block_size>>>(pop_mem);
+	}
+    }
     short *host_pop = 0;
     host_pop = (short*)malloc(total_mem);
 
