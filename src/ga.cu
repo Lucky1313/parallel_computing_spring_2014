@@ -199,17 +199,19 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, i
     curandState local_state = state[id];
     int num_transistors = node_layout[4]; 
     temp2[tid] = rand_int(&local_state, num_transistors / 2) + (half ? num_transistors / 2 : 0);
-    temp1[tid] = pos;
     __syncthreads();
     if (id == 0) {
 	printf("Splitting from %d to %d\n", temp2[tid], temp2[complement_tid]);
     }
-    int width = (temp2[tid] - temp2[complement_tid]) * (half ? 3 : -3);
-    int offset = mem_offset + temp1[tid] * 3 + (node_layout[2] + node_layout[3]) * 2 + 4;
+    int width = (temp2[tid] - temp2[complement_tid]) * (half ? 6 : -6) + 6;
+    temp1[tid] = (half ? temp2[complement_tid] : temp2[tid]) * 6 + (node_layout[2] + node_layout[3]) * 2 + 4;
+    __syncthreads();
+    int offset = mem_offset + temp1[tid];
     for (unsigned int i=0; i<width; ++i) {
 	temp_mem[mem_offset+i] = pop_mem[offset+i];
     }
     if (id == 0) {
+	printf("Width: %d, Complement Pos: %d, Complement Tid: %d, Pos: %d\n", width, complement_pos, complement_tid, pos);
 	printf("Thread 0 layout dump\n");
 	printf("[");
 	for (int i=0; i<node_layout[0]/2; ++i) {
@@ -223,9 +225,18 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, i
 	    printf("(%d, %d)", pop_mem[off+i*2], pop_mem[off+i*2+1]);
 	}
 	printf("]\n");
+	printf("TEMP1 [");
+	for (int i=0; i<blockDim.x; ++i) {
+	    printf("%d, ", temp1[i]);
+	}
+	printf("]\nTEMP2 [");
+	for (int i=0; i<blockDim.x; ++i) {
+	    printf("%d, ", temp2[i]);
+	}
+	printf("]\n");
     }
     __syncthreads();
-    int complement_offset = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0] + offset - mem_offset;
+    int complement_offset = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0] + temp1[tid];
     for (unsigned int i=0; i<width; ++i) {
 	pop_mem[complement_offset+i] = temp_mem[mem_offset+i];
     }
