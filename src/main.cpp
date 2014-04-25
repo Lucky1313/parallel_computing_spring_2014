@@ -6,7 +6,6 @@
 
 #include "layout.h"
 #include "ga.h"
-#include "utils.h"
 
 using namespace std;
 
@@ -80,7 +79,7 @@ void read_input(Layout *layout, char ifile[]) {
 
 int main(int argc, char *argv[]) {
   Layout* main_layout = new Layout();
-  if (argc == 2) {
+  if (argc >= 2) {
     cout << "Inputting file" << endl;
   }
   else {

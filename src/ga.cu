@@ -16,13 +16,13 @@ using namespace std;
 
 #define TILE_WIDTH 16
 #define POP_SIZE 64
+#define NUM_GEN 2
+
 #define MIGRATION_FREQ 0
 #define DISTANCE_WEIGHT 1
 #define ANGLE_WEIGHT 1
-#define LEFT_WEIGHT 1
-#define RIGHT_WEIGHT 1
-#define UP_WEIGHT 1
-#define DOWN_WEIGHT 1
+#define OVERLAP_WEIGHT 10
+
 
 //Data is as follows:
 //0 - size of each copy of data
@@ -35,46 +35,46 @@ using namespace std;
 __constant__ short node_layout[32000];
 
 //Probably a problem with pointers
-__device__ int rand_int(curandState state, int range) {
-    return (int) (curand_uniform(&state)) * range);
+__device__ int rand_int(curandState *state, int range) {
+    return (int) (curand_uniform(state) * range);
 }
 
 __global__ void rand_setup_kernel(curandState *state) {
     int id = blockIdx.x*blockDim.x + threadIdx.x;
-    curand_init(7+id, id, 0, &state[id]);
+    unsigned int seed = (unsigned int) clock64();
+    curand_init(seed + id, id, 0, &state[id]);
 }
 
 __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
     int id = blockIdx.x*blockDim.x + threadIdx.x;
     curandState local_state = state[id];
-    float rand_float;
-    int rand;
 
     int mem_offset = id * node_layout[0];
 
-    pop_mem[mem_offset] = rand_int(local_state, node_layout[0] / 2);
+    //Power and ground
+    pop_mem[mem_offset] = rand_int(&local_state, node_layout[0] / 2);
     pop_mem[mem_offset+1] = 0;
-    pop_mem[mem_offset+2] = rand_int(local_state, node_layout[0] / 2);
+    pop_mem[mem_offset+2] = rand_int(&local_state, node_layout[0] / 2);
     pop_mem[mem_offset+3] = node_layout[0] / 2;
 
     int off = 4;
     for (unsigned int i=0; i<node_layout[2]; ++i) {
 	pop_mem[mem_offset+2*i+off] = 0;
-	pop_mem[mem_offset+2*i+off+1] = rand_int(local_state, node_layout[0] / 2);
+	pop_mem[mem_offset+2*i+off+1] = rand_int(&local_state, node_layout[0] / 2);
     }
     off += node_layout[2] * 2;
     for (unsigned int i=0; i<node_layout[3]; ++i) {
 	pop_mem[mem_offset+2*i+off] = node_layout[0] / 2;
-	pop_mem[mem_offset+2*i+off+1] = rand_int(local_state, node_layout[0] / 2);
+	pop_mem[mem_offset+2*i+off+1] = rand_int(&local_state, node_layout[0] / 2);
     }
     off += node_layout[3] * 2;
     for (unsigned int i=off; i<node_layout[0]; i+=2) {
-	if ((i - off) % 3 == 0) {
-	    pop_mem[mem_offset+i] = rand_int(local_state, node_layout[0] / 2);
+	if ((i - off) % 6 == 0) {
+	    pop_mem[mem_offset+i] = rand_int(&local_state, node_layout[0] / 2);
 	    
-	    pop_mem[mem_offset+i+1] = rand_int(local_state, node_layout[0] / 2);
+	    pop_mem[mem_offset+i+1] = rand_int(&local_state, node_layout[0] / 2);
 	}
-	else if ((i - off) % 3 == 1) {
+	else if ((i - off) % 6 == 2) {
 	    pop_mem[mem_offset+i] = pop_mem[mem_offset+i-2] - 1;
 	    pop_mem[mem_offset+i+1] = pop_mem[mem_offset+i-1] + 1;
 	}
@@ -88,12 +88,12 @@ __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
 
 __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, int id) {
     //Distance between connected terminals
-    int offset = node_layout[4];
+    int offset = node_layout[5];
     int node_offset = 1 + offset + node_layout[offset];
     int dist = 0;
     int size = 0;
     int angles = 0;
-    short x[32]; //Will cause errors if any node has more that 32 terminals
+    short x[32]; //Will cause errors if any node has more that 32 terminals in one node
     short y[32]; //Needed because cuda does not allow dynamically sized arrays
     short t, xdiff, ydiff;
     for (short i=0; i<node_layout[offset]; ++i) {
@@ -154,7 +154,8 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     return dist;
 }
 
-__global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
+
+__global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, int *fit_mem) {
     __shared__ int fit_scores[TILE_WIDTH];
     __shared__ int scores_id[TILE_WIDTH];
     int id = blockIdx.x*blockDim.x + threadIdx.x;
@@ -162,22 +163,10 @@ __global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
     
     fit_scores[threadIdx.x] = single_thread_fitness_func_mem(pop_mem, mem_offset, id);
     scores_id[threadIdx.x] = threadIdx.x;
-    
-    if (id == 0) {
-        printf("Fitness_func: [");
-        for (unsigned int i=0; i<TILE_WIDTH; ++i) {
-	    printf("%d, ", fit_scores[i]);
-        }
-        printf("]\nPositions: [");
-        for (unsigned int i=0; i<TILE_WIDTH; ++i) {
-        	printf("%d, ", scores_id[i]);
-        }
-        printf("]\n");
-    }
 
-    __shared__ int fit_temp1[TILE_WIDTH];
-    __shared__ int fit_temp2[TILE_WIDTH];
-    radix_sort_by_key(fit_scores, scores_id, fit_temp1, fit_temp2);
+    __shared__ int temp1[TILE_WIDTH];
+    __shared__ int temp2[TILE_WIDTH];
+    radix_sort_by_key(fit_scores, scores_id, temp1, temp2);
 
     if (id == 0) {
     	printf("Fitness_func: [");
@@ -192,19 +181,88 @@ __global__ void ga_fitness_kernel(short *pop_mem, int *fit_mem) {
     }
 
     //Crossover
-    //Number of crossovers is POP/4
-    //8 threads per crossover
-    int num_cross = POP_SIZE>>2;
-    
+    int pos;
+    int tid = threadIdx.x;
+    for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+	if (scores_id[i] == tid) {
+	    pos = i;
+	}
+    }
+    char half = pos % 2;
+    int complement_pos = (half == 0 ? pos + 1 : pos - 1);
+    int complement_tid = scores_id[complement_pos];
 
+    if (id == 0) {
+	printf("Trading with thread %d\n", complement_tid);
+    }
+    
+    curandState local_state = state[id];
+    int num_transistors = node_layout[4]; 
+    temp2[tid] = rand_int(&local_state, num_transistors / 2) + (half ? num_transistors / 2 : 0);
+    temp1[tid] = pos;
+    __syncthreads();
+    if (id == 0) {
+	printf("Splitting from %d to %d\n", temp2[tid], temp2[complement_tid]);
+    }
+    int width = (temp2[tid] - temp2[complement_tid]) * (half ? 3 : -3);
+    int offset = mem_offset + temp1[tid] * 3 + (node_layout[2] + node_layout[3]) * 2 + 4;
+    for (unsigned int i=0; i<width; ++i) {
+	temp_mem[mem_offset+i] = pop_mem[offset+i];
+    }
+    if (id == 0) {
+	printf("Thread 0 layout dump\n");
+	printf("[");
+	for (int i=0; i<node_layout[0]/2; ++i) {
+	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
+	}
+	printf("]\n");
+	printf("Thread %d layout dump\n", complement_tid);
+	printf("[");
+	int off = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0];
+	for (int i=0; i<node_layout[0]/2; ++i) {
+	    printf("(%d, %d)", pop_mem[off+i*2], pop_mem[off+i*2+1]);
+	}
+	printf("]\n");
+    }
+    __syncthreads();
+    int complement_offset = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0] + offset - mem_offset;
+    for (unsigned int i=0; i<width; ++i) {
+	pop_mem[complement_offset+i] = temp_mem[mem_offset+i];
+    }
+    __syncthreads();
+
+    if (id == 0) {
+	printf("Thread 0 layout dump\n");
+	printf("[");
+	for (int i=0; i<node_layout[0]/2; ++i) {
+	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
+	}
+	printf("]\n");
+	printf("Thread %d layout dump\n", complement_tid);
+	printf("[");
+	int off = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0];
+	for (int i=0; i<node_layout[0]/2; ++i) {
+	    printf("(%d, %d)", pop_mem[off+i*2], pop_mem[off+i*2+1]);
+	}
+	printf("]\n");
+    }
+    
     //Mutation
     //Number of mutations is POP/32
-    //32 threads per mutation
     int num_mut = POP_SIZE>>5;
+
+    state[id] = local_state;
 }
 
 __global__ void ga_migration_kernel(short *pop_mem) {
 
+}
+
+__global__ void ga_print_kernel(short *pop_mem) {
+    //int id = blockIdx.x*blockDim.x + threadIdx.x;
+    //int mem_offset = id * node_layout[0];
+
+    
 }
 
 int term_pos(Terminal *term, int offset_data, int offset_in, int offset_out) {
@@ -280,7 +338,7 @@ void launch_ga(Layout *main_layout) {
 	size += node->terms.size();
     }
 
-    int offset_data = 5;
+    int offset_data = 6;
     int node_mem_size = 1 + main_layout->nodes_size() + size + offset_data;
     short node_data[node_mem_size];
 
@@ -288,24 +346,29 @@ void launch_ga(Layout *main_layout) {
     node_data[1] = per_copy_size;
     node_data[2] = offset_in;
     node_data[3] = offset_out;
-    node_data[4] = offset_data;
+    node_data[4] = num_terminals / 3;
+    node_data[5] = offset_data;
 
     cout << "Node size: " << node_mem_size << " numbers" << endl;
-    cout << "Node memory use: " << node_mem_size * sizeof(short) << " bytes" << endl;
-
+    cout << "Node memory use: " << node_mem_size * sizeof(short) << " bytes\n" << endl;
+    
     create_node_data_array(main_layout, node_data, offset_data, offset_in, offset_out);
-
+    cout << "Node data: [" << node_data[0] << ", " << node_data[1] << ", " << node_data[2];
+    cout << ", " << node_data[3] << ", " << node_data[4] << ", " << node_data[5] << "]\n" << endl;
+    
     //Random number generation setup
     curandState *rand_states = 0;
     cudaMalloc((void **)&rand_states, thread_count * sizeof(curandState));
     rand_setup_kernel<<<num_blocks, block_size>>>(rand_states);
 
     short *pop_mem = 0;
+    short *temp_mem = 0;
     //short *node_mem = 0;
     int *fit_mem = 0;
     short *run_num = 0;
 
     cudaMalloc((void**)&pop_mem, total_mem);
+    cudaMalloc((void**)&temp_mem, total_mem);
     //cudaMalloc((void**)&node_mem, node_mem_size * sizeof(short));
     cudaMalloc((void**)&fit_mem, thread_count * sizeof(int));
     cudaMalloc((void**)&run_num, sizeof(short));
@@ -317,8 +380,9 @@ void launch_ga(Layout *main_layout) {
     ga_populate_kernel<<<num_blocks, block_size>>>(rand_states, pop_mem);
 
     for (int i=0; i<NUM_GEN; ++i) {
-	ga_fitness_kernel<<<num_blocks, block_size>>>(pop_mem, fit_mem);
-	if (i % 10 == 0) {
+	ga_kernel<<<num_blocks, block_size>>>(rand_states, pop_mem, temp_mem, fit_mem);
+	//ga_print_kernel<<<num_blocks, block_size>>>(pop_mem);
+	if (i % 10 == 9) {
 	    ga_migration_kernel<<<num_blocks, block_size>>>(pop_mem);
 	}
     }
