@@ -16,7 +16,8 @@ using namespace std;
 
 #define TILE_WIDTH 16
 #define POP_SIZE 64
-#define NUM_GEN 200
+#define NUM_GEN 2
+#define MUTATION 3
 
 #define MIGRATION_FREQ 0
 #define DISTANCE_WEIGHT 1
@@ -148,38 +149,77 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     return value;
 }
 
-__device__ void crossover() {
-    int pos;
-    int tid = threadIdx.x;
-    for (unsigned int i=0; i<TILE_WIDTH; ++i) {
-	if (scores_id[i] == tid) {
-	    pos = i;
-	}
-    }
-    char half = pos % 2;
-    int complement_pos = (half == 0 ? pos + 1 : pos - 1);
-    int complement_tid = scores_id[complement_pos];
+__device__ void crossover(curandState *state, short *pop_mem, short *temp_mem, int mem, int off1, int off2) {
 
-    curandState local_state = state[id];
-    int num_transistors = node_layout[4]; 
-    temp2[tid] = rand_int(&local_state, num_transistors / 2) + (half ? num_transistors / 2 : 0);
-    __syncthreads();
-    int width = (temp2[tid] - temp2[complement_tid]) * (half ? 6 : -6) + 6;
-    int start_offset = (half ? temp2[complement_tid] : temp2[tid]) * 6 + (node_layout[2] + node_layout[3]) * 2 + 4;
-    int offset = mem_offset + start_offset;
-    for (unsigned int i=0; i<width; ++i) {
-	temp_mem[mem_offset+i] = pop_mem[offset+i];
+    //IO Crossover
+    int num_io = node_layout[2] + node_layout[3] + 2;
+    int cross1 = rand_int(state, num_io);
+
+    for (int i=0; i<cross1*2; ++i) {
+	temp_mem[mem+i] = pop_mem[off1+i];
     }
-    __syncthreads();
-    int complement_offset = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0] + start_offset;
-    for (unsigned int i=0; i<width; ++i) {
-	pop_mem[complement_offset+i] = temp_mem[mem_offset+i];
+    for (int i=cross1*2; i<num_io*2; ++i) {
+	temp_mem[mem+i] = pop_mem[off2+i];
     }
-    __syncthreads();
+
+    //Terminal Crossover
+    int num_transistors = node_layout[4];
+    int cross2 = rand_int(state, num_transistors);
+
+    mem += num_io * 2;
+    off1 += num_io * 2;
+    off2 += num_io * 2;
+
+    for (int i=0; i<cross2*6; ++i) {
+	temp_mem[mem+i] = pop_mem[off1+i];
+    }
+    for (int i=cross2*6; i<num_transistors*6; ++i) {
+	temp_mem[mem+i] = pop_mem[off2+i];
+    }
 }
 
-__device__ void mutation() {
+__device__ void mutation(curandState *state, short *temp_mem) {
 
+    int chance = rand_int(state, 100);
+    if (chance < MUTATION) {
+	int pick = rand_int(state, node_layout[0]);
+	int num_io = node_layout[2] + node_layout[3] + 2;
+	if (pick < num_io * 2) {
+	    temp_mem[pick] = rand_int(state, node_layout[0] / 2);
+	}
+	else {
+	    int dgs = ((pick - num_io * 2) / 2) % 3;
+	    int xy = pick % 2;
+	    int rand = rand_int(state, node_layout[0] / 2);
+	    if (dgs == 0) {
+		temp_mem[pick] = rand;
+		temp_mem[pick+2] = rand + (xy ? 1 : -1);
+		temp_mem[pick+4] = rand + (xy ? 2 : 0);
+	    }
+	    else if (dgs == 1) {
+		temp_mem[pick-2] = rand + (xy ? -1 : 1);
+		temp_mem[pick] = rand;
+		temp_mem[pick+4] = rand + 1;
+	    }
+	    else {
+		temp_mem[pick-4] = rand + (xy ? -2 : 0);
+		temp_mem[pick-2] = rand - 1);
+		temp_mem[pick] = rand;
+	    }
+	}
+    }
+}
+
+__device__ int bin_search(float *normalized_data, float point, int begin, int end) {
+    int pivot = (end - begin) / 2 + begin;
+    if (point >= normalized_data[pivot]) {
+	if (pivot == end)  return begin;
+	return bin_search(normalized_data, point, pivot, end);
+    }
+    else {
+	if (pivot == begin) return end;
+	return bin_search(normalized_data, point, begin, pivot);
+    }
 }
 
 __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, int *fit_mem) {
@@ -207,15 +247,37 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, i
 	printf("]\n");
     }
 
+    temp1[tid] = fit_scores[tid];
+    __syncthreads();
+    int sum = 0;
+    sum_reduction(temp1, &sum);
+    __shared__ float normalized_fit_scores[TILE_WIDTH];
+    normalized_fit_scores[tid] = (float) fit_scores[tid] / (float) sum;
+    __syncthreads();
+    block_scan(normalized_fit_scores);
+
     //Selection
+    //Roulette wheel selection
+    curandState local_state = state[id];
+    
+    float pick1 = curand_uniform(&local_state);
+    float pick2 = curand_uniform(&local_state);
+
+    int pos1 = bin_search(normalized_fit_scores, pick1, 0, TILE_WIDTH);
+    int pos2 = bin_search(normalized_fit_scores, pick2, 0, TILE_WIDTH);
+
+    int id1 = scores_id(pos1);
+    int id2 = scores_id(pos2);
+
+    int off1 = (id1 + blockDim.x*blockIdx.x) * node_layout[0];
+    int off2 = (id2 + blockDim.x*blockIdx.x) * node_layout[0];
+    
+    //Crossover
+    //Store new generation in temp_mem
+    crossover(&local_state, pop_mem, temp_mem, mem_offset, off1, off2);
     
     //Mutation
-    //Number of mutations is POP/32
-    int num_mut = POP_SIZE>>5;
-    if (tid % num_mut == 0) {
-	
-    }
-    
+    mutation(&local_state, temp_mem);
 
     state[id] = local_state;
 }

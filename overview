@@ -41,7 +41,7 @@ migration from Island to Island?
 Genetic Algorithm Order:
 Parents
 Evaluation - Determining best individuals based on fitness function
-Selectrion - Order individuals and select best ones
+Selection - Order individuals and select best ones
 Crossover - Create new individuals from parents
 Mutation - Create new individuals by changing single individuals
 Offspring become parents

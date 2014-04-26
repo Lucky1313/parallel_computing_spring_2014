@@ -2,11 +2,15 @@
 #ifndef __UTILS_H_INCLUDED__
 #define __UTILS_H_INCLUDED__
 
+__device__ void sum_reduction(int *data, int *out);
+
 __device__ void max_func(short *data, short *temp, short *out);
 
 __device__ void min_func(short *data, short *temp, short *out);
 
 __device__ void block_scan(int *data);
+
+__device__ void block_scan(float *data);
 
 __device__ void radix_sort(int *data, int *temp1, int *temp2);
 

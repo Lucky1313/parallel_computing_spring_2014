@@ -6,9 +6,8 @@
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 
-
 //Adapted from Nvidia
-__device__ void reduction_example(int *data, int *out) {
+__device__ void sum_reduction(int *data, int *out) {
     unsigned int id = threadIdx.x;
     for (unsigned int s=blockDim.x/2; s>0; s>>=1) {
 	if (id < s) {
@@ -18,6 +17,23 @@ __device__ void reduction_example(int *data, int *out) {
     }
     if (id == 0) out[0] = data[0];
 }
+
+/*
+__device__ void reduce_sum(float *data, float *temp, float* out) {
+    unsigned int tid = threadIdx.x;
+    temp[tid] = data[tid];
+    __syncthreads();
+    for (unsigned int s=blockDim.x/2; s>0; s>>=1) {
+	if (tid < s) {
+	    sdata[tid] += sdata[tid + s];
+	}
+	__syncthreads();
+    }
+    if (tid == 0) {
+	out[0] = temp[0];
+    }
+}
+*/
 
 __device__ void max_func(short *data, short *temp, short *out) {
     unsigned int tid = threadIdx.x;
@@ -49,7 +65,6 @@ __device__ void min_func(short *data, short *temp, short *out) {
     }
 }
 
-
 __device__ void block_scan(int *data) {
 	unsigned int tid = threadIdx.x;
 	for (unsigned int d = 1; d<blockDim.x; d<<=1) {
@@ -63,6 +78,29 @@ __device__ void block_scan(int *data) {
 	}
 	__syncthreads();
 	int tmp;
+	for (unsigned int d = blockDim.x>>1; d >= 1; d>>=1) {
+		if ((tid + 1) % (d<<1) == 0) {
+			tmp = data[tid - d];
+			data[tid - d] = data[tid];
+			data[tid] = tmp + data[tid];
+		}
+	}
+	__syncthreads();
+}
+
+__device__ void block_scan(float *data) {
+	unsigned int tid = threadIdx.x;
+	for (unsigned int d = 1; d<blockDim.x; d<<=1) {
+		if ((tid + 1) % (d<<1) == 0) {
+			data[tid] = data[tid] + data[tid - d];
+		}
+	}
+
+	if (tid==blockDim.x-1) {
+		data[tid] = 0;
+	}
+	__syncthreads();
+	float tmp;
 	for (unsigned int d = blockDim.x>>1; d >= 1; d>>=1) {
 		if ((tid + 1) % (d<<1) == 0) {
 			tmp = data[tid - d];
