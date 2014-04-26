@@ -45,3 +45,12 @@ Selectrion - Order individuals and select best ones
 Crossover - Create new individuals from parents
 Mutation - Create new individuals by changing single individuals
 Offspring become parents
+
+
+To Do:
+Add champions of each block to a global memory location
+Move crossover to be a seperate function
+Move mutation to be a seperate function
+Select top 1/2 of population to keep
+Bottom 1/2 are then made from crossovers of the top 1/2
+Run mutations randomly on some of the poulation

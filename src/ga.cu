@@ -16,12 +16,12 @@ using namespace std;
 
 #define TILE_WIDTH 16
 #define POP_SIZE 64
-#define NUM_GEN 2
+#define NUM_GEN 200
 
 #define MIGRATION_FREQ 0
 #define DISTANCE_WEIGHT 1
-#define ANGLE_WEIGHT 1
-#define OVERLAP_WEIGHT 10
+#define ANGLE_WEIGHT 100
+#define OVERLAP_WEIGHT 1000
 
 
 //Data is as follows:
@@ -108,36 +108,32 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
 		dist += xdiff * xdiff + ydiff * ydiff;
 
 		//Angles
-		angles += (xdiff == 0) + (ydiff == 0) - 1;
+		angles += (xdiff != 0) + (ydiff != 0) - 1;
 	    }
 	    ++node_offset;
 	}
     }
     angles = angles * ANGLE_WEIGHT;
     dist = dist * DISTANCE_WEIGHT;
-    /*
-    int left = 0;
-    int right = 0;
-    int up = 0;
-    int down = 0;
-    int pos = 0;
-    //Inputs to left side
-    for (short i=0; i<node_layout[2]; ++i) {
-	pos = pop_mem[mem_offset+i+4];
-	left += pos * pos * LEFT_WEIGHT;
+
+    int overlap = 0;
+    int off = mem_offset + (node_layout[2] + node_layout[3]) * 2 + 4;
+    short x1, y1, x2, y2;
+    for (unsigned int i=0; i<node_layout[4]; ++i) {
+	for (unsigned int j=i+1; j<node_layout[4]; ++j) {
+	    x1 = pop_mem[off+i*3];
+	    y1 = pop_mem[off+i*3+1];
+	    x2 = pop_mem[off+j*3];
+	    y2 = pop_mem[off+j*3+1];
+	    if ((x1 - x2) < 2 && (x1 - x2) > -2 &&
+		(y1 - y2) < 3 && (y1 - y2) > -3) {
+		++overlap;
+	    }
+	}
     }
-    //Outputs to right side
-    for (short i=0; i<node_layout[3]; ++i) {
-	pos = pop_mem[mem_offset+i+node_layout[2]*2+4] - 10; //TODO Change depend on num transistors
-	right += pos * pos * RIGHT_WEIGHT;
-    }
-    //Power to top
-    pos = pop_mem[mem_offset+1];
-    up = pos * pos * UP_WEIGHT;
-    //Ground to bottom
-    pos = pop_mem[mem_offset+3] - 10;
-    down = pos * pos * DOWN_WEIGHT;
-    */
+    overlap = overlap * OVERLAP_WEIGHT;
+    
+    int value = dist + angles + overlap;
     //Print some useful info
     if (id == 0)
     {
@@ -147,13 +143,44 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
 	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
 	}
 	printf("]\n");
-	//printf("Fitness function for thread %d output: %d, %d, %d, %d, %d\n", id, dist, left, right, up, down);
-	printf("Fitness function for thread %d: %d\n", id, dist);
+	printf("Fitness function for thread %d: %d (%d, %d, %d)\n", id, value, dist, angles, overlap);
     }
-    //return dist + left + right + up + down;
-    return dist;
+    return value;
 }
 
+__device__ void crossover() {
+    int pos;
+    int tid = threadIdx.x;
+    for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+	if (scores_id[i] == tid) {
+	    pos = i;
+	}
+    }
+    char half = pos % 2;
+    int complement_pos = (half == 0 ? pos + 1 : pos - 1);
+    int complement_tid = scores_id[complement_pos];
+
+    curandState local_state = state[id];
+    int num_transistors = node_layout[4]; 
+    temp2[tid] = rand_int(&local_state, num_transistors / 2) + (half ? num_transistors / 2 : 0);
+    __syncthreads();
+    int width = (temp2[tid] - temp2[complement_tid]) * (half ? 6 : -6) + 6;
+    int start_offset = (half ? temp2[complement_tid] : temp2[tid]) * 6 + (node_layout[2] + node_layout[3]) * 2 + 4;
+    int offset = mem_offset + start_offset;
+    for (unsigned int i=0; i<width; ++i) {
+	temp_mem[mem_offset+i] = pop_mem[offset+i];
+    }
+    __syncthreads();
+    int complement_offset = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0] + start_offset;
+    for (unsigned int i=0; i<width; ++i) {
+	pop_mem[complement_offset+i] = temp_mem[mem_offset+i];
+    }
+    __syncthreads();
+}
+
+__device__ void mutation() {
+
+}
 
 __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, int *fit_mem) {
     __shared__ int fit_scores[TILE_WIDTH];
@@ -180,87 +207,15 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, i
 	printf("]\n");
     }
 
-    //Crossover
-    int pos;
-    int tid = threadIdx.x;
-    for (unsigned int i=0; i<TILE_WIDTH; ++i) {
-	if (scores_id[i] == tid) {
-	    pos = i;
-	}
-    }
-    char half = pos % 2;
-    int complement_pos = (half == 0 ? pos + 1 : pos - 1);
-    int complement_tid = scores_id[complement_pos];
-
-    if (id == 0) {
-	printf("Trading with thread %d\n", complement_tid);
-    }
-    
-    curandState local_state = state[id];
-    int num_transistors = node_layout[4]; 
-    temp2[tid] = rand_int(&local_state, num_transistors / 2) + (half ? num_transistors / 2 : 0);
-    __syncthreads();
-    if (id == 0) {
-	printf("Splitting from %d to %d\n", temp2[tid], temp2[complement_tid]);
-    }
-    int width = (temp2[tid] - temp2[complement_tid]) * (half ? 6 : -6) + 6;
-    temp1[tid] = (half ? temp2[complement_tid] : temp2[tid]) * 6 + (node_layout[2] + node_layout[3]) * 2 + 4;
-    __syncthreads();
-    int offset = mem_offset + temp1[tid];
-    for (unsigned int i=0; i<width; ++i) {
-	temp_mem[mem_offset+i] = pop_mem[offset+i];
-    }
-    if (id == 0) {
-	printf("Width: %d, Complement Pos: %d, Complement Tid: %d, Pos: %d\n", width, complement_pos, complement_tid, pos);
-	printf("Thread 0 layout dump\n");
-	printf("[");
-	for (int i=0; i<node_layout[0]/2; ++i) {
-	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
-	}
-	printf("]\n");
-	printf("Thread %d layout dump\n", complement_tid);
-	printf("[");
-	int off = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0];
-	for (int i=0; i<node_layout[0]/2; ++i) {
-	    printf("(%d, %d)", pop_mem[off+i*2], pop_mem[off+i*2+1]);
-	}
-	printf("]\n");
-	printf("TEMP1 [");
-	for (int i=0; i<blockDim.x; ++i) {
-	    printf("%d, ", temp1[i]);
-	}
-	printf("]\nTEMP2 [");
-	for (int i=0; i<blockDim.x; ++i) {
-	    printf("%d, ", temp2[i]);
-	}
-	printf("]\n");
-    }
-    __syncthreads();
-    int complement_offset = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0] + temp1[tid];
-    for (unsigned int i=0; i<width; ++i) {
-	pop_mem[complement_offset+i] = temp_mem[mem_offset+i];
-    }
-    __syncthreads();
-
-    if (id == 0) {
-	printf("Thread 0 layout dump\n");
-	printf("[");
-	for (int i=0; i<node_layout[0]/2; ++i) {
-	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
-	}
-	printf("]\n");
-	printf("Thread %d layout dump\n", complement_tid);
-	printf("[");
-	int off = (blockIdx.x*blockDim.x+complement_tid) * node_layout[0];
-	for (int i=0; i<node_layout[0]/2; ++i) {
-	    printf("(%d, %d)", pop_mem[off+i*2], pop_mem[off+i*2+1]);
-	}
-	printf("]\n");
-    }
+    //Selection
     
     //Mutation
     //Number of mutations is POP/32
     int num_mut = POP_SIZE>>5;
+    if (tid % num_mut == 0) {
+	
+    }
+    
 
     state[id] = local_state;
 }
