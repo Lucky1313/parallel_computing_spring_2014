@@ -15,14 +15,14 @@
 using namespace std;
 
 #define TILE_WIDTH 16
-#define POP_SIZE 64
-#define NUM_GEN 2
-#define MUTATION 3
+#define POP_SIZE 16
+#define NUM_GEN 20000
+#define MUTATION 30
 
 #define MIGRATION_FREQ 0
 #define DISTANCE_WEIGHT 1
 #define ANGLE_WEIGHT 100
-#define OVERLAP_WEIGHT 1000
+#define OVERLAP_WEIGHT 100
 
 
 //Data is as follows:
@@ -178,46 +178,72 @@ __device__ void crossover(curandState *state, short *pop_mem, short *temp_mem, i
     }
 }
 
-__device__ void mutation(curandState *state, short *temp_mem) {
+__device__ void mutation(curandState *state, short *temp_mem, int mem_offset) {
 
     int chance = rand_int(state, 100);
     if (chance < MUTATION) {
+	/*
+	printf("New mutation on %d\n", mem_offset / node_layout[0]);
+	printf("Before mutation Layout dump: [");
+	for (int i=0; i<node_layout[0]/2; ++i) {
+	    printf("(%d, %d)", temp_mem[mem_offset+i*2], temp_mem[mem_offset+i*2+1]);
+	}
+	printf("]\n");
+	*/
 	int pick = rand_int(state, node_layout[0]);
+	//printf("Pick: %d\n", pick);
 	int num_io = node_layout[2] + node_layout[3] + 2;
 	if (pick < num_io * 2) {
-	    temp_mem[pick] = rand_int(state, node_layout[0] / 2);
+	    temp_mem[mem_offset+pick] = rand_int(state, node_layout[0] / 2);
 	}
 	else {
 	    int dgs = ((pick - num_io * 2) / 2) % 3;
 	    int xy = pick % 2;
 	    int rand = rand_int(state, node_layout[0] / 2);
-	    if (dgs == 0) {
-		temp_mem[pick] = rand;
-		temp_mem[pick+2] = rand + (xy ? 1 : -1);
-		temp_mem[pick+4] = rand + (xy ? 2 : 0);
-	    }
-	    else if (dgs == 1) {
-		temp_mem[pick-2] = rand + (xy ? -1 : 1);
-		temp_mem[pick] = rand;
-		temp_mem[pick+4] = rand + 1;
-	    }
-	    else {
-		temp_mem[pick-4] = rand + (xy ? -2 : 0);
-		temp_mem[pick-2] = rand - 1);
-		temp_mem[pick] = rand;
+	    // printf("Change: %d, %d, %d\n", dgs, xy, rand);
+	    switch(dgs) {
+	    case 0:
+		//printf("D\n");
+		temp_mem[mem_offset+pick] = rand;
+		temp_mem[mem_offset+pick+2] = rand + (xy ? 1 : -1);
+		temp_mem[mem_offset+pick+4] = rand + (xy ? 2 : 0);
+		break;
+	    case 1:
+		//printf("G\n");
+		temp_mem[mem_offset+pick-2] = rand + (xy ? -1 : 1);
+		temp_mem[mem_offset+pick] = rand;
+		temp_mem[mem_offset+pick+2] = rand + 1;
+		break;
+	    case 2:
+		//printf("S\n");
+		temp_mem[mem_offset+pick-4] = rand + (xy ? -2 : 0);
+		temp_mem[mem_offset+pick-2] = rand - 1;
+		temp_mem[mem_offset+pick] = rand;
+		break;
+	    default:
+		printf("Err\n");
 	    }
 	}
+	/*
+	printf("After mutation Layout dump: [");
+	for (int i=0; i<node_layout[0]/2; ++i) {
+	    printf("(%d, %d)", temp_mem[mem_offset+i*2], temp_mem[mem_offset+i*2+1]);
+	}
+	printf("]\n");
+	*/
     }
+    
 }
 
+//TODO REDO
 __device__ int bin_search(float *normalized_data, float point, int begin, int end) {
     int pivot = (end - begin) / 2 + begin;
     if (point >= normalized_data[pivot]) {
-	if (pivot == end)  return begin;
+	if (pivot == end - 1)  return pivot;
 	return bin_search(normalized_data, point, pivot, end);
     }
     else {
-	if (pivot == begin) return end;
+	if (pivot == begin) return begin;
 	return bin_search(normalized_data, point, begin, pivot);
     }
 }
@@ -225,14 +251,18 @@ __device__ int bin_search(float *normalized_data, float point, int begin, int en
 __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, int *fit_mem) {
     __shared__ int fit_scores[TILE_WIDTH];
     __shared__ int scores_id[TILE_WIDTH];
-    int id = blockIdx.x*blockDim.x + threadIdx.x;
+    __shared__ int temp1[TILE_WIDTH];
+    __shared__ int temp2[TILE_WIDTH];
+    __shared__ float normalized_fit_scores[TILE_WIDTH];
+    __shared__ int sum;
+    int tid = threadIdx.x;
+    int id = blockIdx.x*blockDim.x + tid;
     int mem_offset = id * node_layout[0];
     
     fit_scores[threadIdx.x] = single_thread_fitness_func_mem(pop_mem, mem_offset, id);
     scores_id[threadIdx.x] = threadIdx.x;
 
-    __shared__ int temp1[TILE_WIDTH];
-    __shared__ int temp2[TILE_WIDTH];
+
     radix_sort_by_key(fit_scores, scores_id, temp1, temp2);
 
     if (id == 0) {
@@ -248,14 +278,28 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, i
     }
 
     temp1[tid] = fit_scores[tid];
+    if (tid == 0) sum = 0;
     __syncthreads();
-    int sum = 0;
     sum_reduction(temp1, &sum);
-    __shared__ float normalized_fit_scores[TILE_WIDTH];
-    normalized_fit_scores[tid] = (float) fit_scores[tid] / (float) sum;
+    normalized_fit_scores[tid] = (1 - ((float) fit_scores[tid] / (float) sum)) / (TILE_WIDTH - 1);
     __syncthreads();
+
+    if (id == 0) {
+	printf("Normalized scores: [");
+	for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+	    printf("%f, ", normalized_fit_scores[i]);
+	}
+	printf("]\n");
+    }
     block_scan(normalized_fit_scores);
 
+    if (id == 0) {
+	printf("Summed Normalized scores: [");
+	for (unsigned int i=0; i<TILE_WIDTH; ++i) {
+	    printf("%f, ", normalized_fit_scores[i]);
+	}
+	printf("]\n");
+    }
     //Selection
     //Roulette wheel selection
     curandState local_state = state[id];
@@ -266,18 +310,19 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, i
     int pos1 = bin_search(normalized_fit_scores, pick1, 0, TILE_WIDTH);
     int pos2 = bin_search(normalized_fit_scores, pick2, 0, TILE_WIDTH);
 
-    int id1 = scores_id(pos1);
-    int id2 = scores_id(pos2);
+    int id1 = scores_id[pos1];
+    int id2 = scores_id[pos2];
 
     int off1 = (id1 + blockDim.x*blockIdx.x) * node_layout[0];
     int off2 = (id2 + blockDim.x*blockIdx.x) * node_layout[0];
-    
+
+    //printf("New child from parents %d (%d) and %d (%d)\n", id1, fit_scores[pos1], id2, fit_scores[pos2]);
     //Crossover
     //Store new generation in temp_mem
     crossover(&local_state, pop_mem, temp_mem, mem_offset, off1, off2);
     
     //Mutation
-    mutation(&local_state, temp_mem);
+    mutation(&local_state, temp_mem, mem_offset);
 
     state[id] = local_state;
 }
@@ -409,6 +454,7 @@ void launch_ga(Layout *main_layout) {
 
     for (int i=0; i<NUM_GEN; ++i) {
 	ga_kernel<<<num_blocks, block_size>>>(rand_states, pop_mem, temp_mem, fit_mem);
+	ga_kernel<<<num_blocks, block_size>>>(rand_states, temp_mem, pop_mem, fit_mem);
 	//ga_print_kernel<<<num_blocks, block_size>>>(pop_mem);
 	if (i % 10 == 9) {
 	    ga_migration_kernel<<<num_blocks, block_size>>>(pop_mem);
@@ -438,5 +484,7 @@ void launch_ga(Layout *main_layout) {
     cudaFree(pop_mem);
     cudaFree(fit_mem);
     cudaFree(run_num);
+
+    cout << "Done" << endl;
 }
 

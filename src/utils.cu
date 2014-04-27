@@ -16,6 +16,7 @@ __device__ void sum_reduction(int *data, int *out) {
 	__syncthreads();
     }
     if (id == 0) out[0] = data[0];
+    __syncthreads();
 }
 
 /*
