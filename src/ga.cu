@@ -14,10 +14,10 @@
 
 using namespace std;
 
-#define TILE_WIDTH 512
-#define POP_SIZE (1 << 16)
+#define TILE_WIDTH 1024
+#define POP_SIZE (1 << 18)
 #define NUM_BLOCKS POP_SIZE / TILE_WIDTH
-#define NUM_GEN 10
+#define NUM_GEN 500
 #define MUTATION 30
 
 #define MIGRATION_FREQ 0
@@ -382,22 +382,12 @@ __global__ void champion_kernel(short *best_mem, int *score_mem) {
 
     if (score_mem[NUM_BLOCKS] > scores[0] || score_mem[NUM_BLOCKS] == 0) {
 	if (tid == 0) {
-	    printf("Champion score, overwriting %d with %d\n", score_mem[NUM_BLOCKS], scores[0]);
 	    score_mem[NUM_BLOCKS] = scores[0];
-	    printf("Scores: [");
-	    for (int i=0; i<NUM_BLOCKS; ++i) {
-		printf("%d, ", scores[i]);
-	    }
-	    printf("]\nScorID: [");
-	    for (int i=0; i<NUM_BLOCKS; ++i) {
-		printf("%d, ", scores_id[i]);
-	    }
-	    printf("]\n");
 	}
 	int best_offset = scores_id[0] * node_layout[0];
 	for (unsigned int i=tid; i<node_layout[0]; i += NUM_BLOCKS) {
 	    //printf("Champion copying point %d\n", i);
-	    printf("Place %d, Copying from %d to %d\n", i, NUM_BLOCKS*node_layout[0]+i, best_offset+i);
+	    //printf("Place %d, Copying from %d to %d\n", i, NUM_BLOCKS*node_layout[0]+i, best_offset+i);
 	    best_mem[NUM_BLOCKS*node_layout[0]+i] = best_mem[best_offset+i];
 	}
     }
@@ -525,7 +515,7 @@ void launch_ga(Layout *main_layout) {
 	//    ga_migration_kernel<<<num_blocks, block_size>>>(pop_mem);
 	//}
     }
-    printf("Calling champion kernel with: %d threads.\n", num_blocks.x);
+    //printf("Calling champion kernel with: %d threads.\n", num_blocks.x);
     champion_kernel<<<1, num_blocks>>>(best_mem, score_mem);
     short *host_pop = 0;
     short *host_best = 0;
@@ -555,9 +545,9 @@ void launch_ga(Layout *main_layout) {
     cudaMalloc((void**)&test_int_data, 1024*sizeof(int));
     cudaMalloc((void**)&test_short_data, 1024*sizeof(short));
     
-    cout << "Test kernel: " << endl;
+    //cout << "Test kernel: " << endl;
     //test_kernel<<<1, 1024>>>(test_int_data, test_short_data);
-    cout << "Done kernel" << endl;
+    //cout << "Done kernel" << endl;
     
     free(host_pop);
     free(host_best);
