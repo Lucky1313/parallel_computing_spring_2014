@@ -51,6 +51,21 @@ __device__ void max_func(short *data, short *temp, short *out) {
     }
 }
 
+__device__ void max_func_special(short *data, short *temp, short *out, int stride, int offset) {
+    unsigned int tid = threadIdx.x;
+    temp[tid] = data[tid];
+    __syncthreads();
+    for (unsigned int s=blockDim.x/2; s>0; s>>=1) {
+	if ((tid-offset) < s && (tid-offset) > 0 && (tid-offset) % stride == 0) {
+	    temp[tid] = ((temp[tid+s] > temp[tid]) ? temp[tid+s] : temp[tid]);
+	}
+	__syncthreads();
+    }
+    if (tid == 0) {
+	out[0] = temp[0];
+    }
+}
+
 __device__ void min_func(short *data, short *temp, short *out) {
     unsigned int tid = threadIdx.x;
     temp[tid] = data[tid];
@@ -72,6 +87,7 @@ __device__ void block_scan(int *data) {
 		if ((tid + 1) % (d<<1) == 0) {
 			data[tid] = data[tid] + data[tid - d];
 		}
+		__syncthreads();
 	}
 
 	if (tid==blockDim.x-1) {
@@ -85,8 +101,8 @@ __device__ void block_scan(int *data) {
 			data[tid - d] = data[tid];
 			data[tid] = tmp + data[tid];
 		}
+		__syncthreads();
 	}
-	__syncthreads();
 }
 
 __device__ void block_scan(float *data) {
@@ -95,6 +111,7 @@ __device__ void block_scan(float *data) {
 		if ((tid + 1) % (d<<1) == 0) {
 			data[tid] = data[tid] + data[tid - d];
 		}
+		__syncthreads();
 	}
 
 	if (tid==blockDim.x-1) {
@@ -108,8 +125,8 @@ __device__ void block_scan(float *data) {
 			data[tid - d] = data[tid];
 			data[tid] = tmp + data[tid];
 		}
+		__syncthreads();
 	}
-	__syncthreads();
 }
 
 __device__ void radix_sort(int *data, int *temp1, int *temp2) {
@@ -155,17 +172,17 @@ __device__ void radix_sort_by_key(int *keys, int *data, int *temp1, int *temp2) 
 }
 
 __global__ void test_kernel(int *test_int_data, short *test_short_data) {
-    //Need blockdim of 64, one block
-    __shared__ int test_int[64];
-    __shared__ int temp_int_1[64];
-    __shared__ int temp_int_2[64];
-    __shared__ short test_short[64];
-    __shared__ short temp_short[64];
+    //Need blockdim of 256, one block
+    __shared__ int test_int[1024];
+    __shared__ int temp_int_1[1024];
+    __shared__ int temp_int_2[1024];
+    __shared__ short test_short[1024];
+    __shared__ short temp_short[1024];
     __shared__ short out[1];
     unsigned int tid = threadIdx.x;
-    test_int[tid] = test_int_data[tid];
-    temp_int_1[tid] = test_int_data[tid];
-    test_short[tid] = test_short_data[tid];
+    test_int[tid] = 1024 - tid;
+    temp_int_1[tid] = 1024 - tid;
+    test_short[tid] = 1024 - tid;
     __syncthreads();
 
     if (tid == 0) printf("Running test kernel\n");
@@ -176,17 +193,17 @@ __global__ void test_kernel(int *test_int_data, short *test_short_data) {
     block_scan(temp_int_1);
     if (tid == 0) {
 	printf("Block scan: [");
-	for (unsigned int i=0; i<64; ++i) {
+	for (unsigned int i=0; i<1024; ++i) {
 	    printf("%d, ", temp_int_1[i]);
 	}
 	printf("]\n");
     }
     __syncthreads();
-    temp_int_1[tid] = tid;
+    temp_int_1[tid] = 1024 - tid;
     block_scan(temp_int_1);
     if (tid == 0) {
 	printf("Block scan: [");
-	for (unsigned int i=0; i<64; ++i) {
+	for (unsigned int i=0; i<1024; ++i) {
 	    printf("%d, ", temp_int_1[i]);
 	}
 	printf("]\n");
@@ -195,7 +212,7 @@ __global__ void test_kernel(int *test_int_data, short *test_short_data) {
     radix_sort(test_int, temp_int_1, temp_int_2);
     if (tid == 0) {
 	printf("Radix Sort: [");
-	for (unsigned int i=0; i<64; ++i) {
+	for (unsigned int i=0; i<1024; ++i) {
 	    printf("%d, ", test_int[i]);
 	}
 	printf("]\n");

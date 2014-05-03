@@ -6,6 +6,8 @@ __device__ void sum_reduction(int *data, int *out);
 
 __device__ void max_func(short *data, short *temp, short *out);
 
+__device__ void max_func_special(short *data, short *temp, short *out, int stride, int offset);
+
 __device__ void min_func(short *data, short *temp, short *out);
 
 __device__ void block_scan(int *data);
