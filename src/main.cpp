@@ -9,6 +9,7 @@
 
 using namespace std;
 
+//Read input file to extract node data
 void read_input(Layout *layout, char ifile[]) {
   ifstream file;
   file.open(ifile);

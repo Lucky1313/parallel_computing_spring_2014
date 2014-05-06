@@ -6,7 +6,7 @@
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 
-//Adapted from Nvidia
+//Copied from NVidia
 __device__ void sum_reduction(int *data, int *out) {
     unsigned int id = threadIdx.x;
     for (unsigned int s=blockDim.x/2; s>0; s>>=1) {
@@ -19,23 +19,7 @@ __device__ void sum_reduction(int *data, int *out) {
     __syncthreads();
 }
 
-/*
-__device__ void reduce_sum(float *data, float *temp, float* out) {
-    unsigned int tid = threadIdx.x;
-    temp[tid] = data[tid];
-    __syncthreads();
-    for (unsigned int s=blockDim.x/2; s>0; s>>=1) {
-	if (tid < s) {
-	    sdata[tid] += sdata[tid + s];
-	}
-	__syncthreads();
-    }
-    if (tid == 0) {
-	out[0] = temp[0];
-    }
-}
-*/
-
+//Find maximum of given data, output to out
 __device__ void max_func(short *data, short *temp, short *out) {
     unsigned int tid = threadIdx.x;
     temp[tid] = data[tid];
@@ -51,21 +35,7 @@ __device__ void max_func(short *data, short *temp, short *out) {
     }
 }
 
-__device__ void max_func_special(short *data, short *temp, short *out, int stride, int offset) {
-    unsigned int tid = threadIdx.x;
-    temp[tid] = data[tid];
-    __syncthreads();
-    for (unsigned int s=blockDim.x/2; s>0; s>>=1) {
-	if ((tid-offset) < s && (tid-offset) > 0 && (tid-offset) % stride == 0) {
-	    temp[tid] = ((temp[tid+s] > temp[tid]) ? temp[tid+s] : temp[tid]);
-	}
-	__syncthreads();
-    }
-    if (tid == 0) {
-	out[0] = temp[0];
-    }
-}
-
+//Find minimum of given data, output to out
 __device__ void min_func(short *data, short *temp, short *out) {
     unsigned int tid = threadIdx.x;
     temp[tid] = data[tid];
@@ -81,6 +51,8 @@ __device__ void min_func(short *data, short *temp, short *out) {
     }
 }
 
+//Block scan based on NVidia implementation found here:
+// http://http.developer.nvidia.com/GPUGems3/gpugems3_ch39.html
 __device__ void block_scan(int *data) {
 	unsigned int tid = threadIdx.x;
 	for (unsigned int d = 1; d<blockDim.x; d<<=1) {
@@ -105,6 +77,7 @@ __device__ void block_scan(int *data) {
 	}
 }
 
+//Same as previous but for floats. Should be templated
 __device__ void block_scan(float *data) {
 	unsigned int tid = threadIdx.x;
 	for (unsigned int d = 1; d<blockDim.x; d<<=1) {
@@ -129,6 +102,8 @@ __device__ void block_scan(float *data) {
 	}
 }
 
+//Radix sort based on NVidia implementation found here:
+// http://http.developer.nvidia.com/GPUGems3/gpugems3_ch39.html
 __device__ void radix_sort(int *data, int *temp1, int *temp2) {
     unsigned int tid = threadIdx.x;
     unsigned int total = 0;
@@ -141,7 +116,7 @@ __device__ void radix_sort(int *data, int *temp1, int *temp2) {
 	block_scan(temp1);
 	total = temp1[blockDim.x-1] + temp2[blockDim.x-1];
 	temp2[tid] = tid - temp1[tid] + total;
-	temp1[tid] = b ? temp1[tid] : temp2[tid]; //Inverse of nvidia radix, account for b being !bit
+	temp1[tid] = b ? temp1[tid] : temp2[tid]; //Inverse of NVidia radix, account for b being !bit
 	int tmp = data[tid];
 	__syncthreads();
 	data[temp1[tid]] = tmp;
@@ -149,6 +124,8 @@ __device__ void radix_sort(int *data, int *temp1, int *temp2) {
     }
 }
 
+//Radix sort which modifies the key array as well as data array,
+//keeping them in the same relative position
 __device__ void radix_sort_by_key(int *keys, int *data, int *temp1, int *temp2) {
     unsigned int tid = threadIdx.x;
     unsigned int total = 0;
@@ -161,7 +138,7 @@ __device__ void radix_sort_by_key(int *keys, int *data, int *temp1, int *temp2) 
 	block_scan(temp1);
 	total = temp1[blockDim.x-1] + temp2[blockDim.x-1];
 	temp2[tid] = tid - temp1[tid] + total;
-	temp1[tid] = b ? temp1[tid] : temp2[tid]; //Inverse of nvidia radix, account for b being !bit
+	temp1[tid] = b ? temp1[tid] : temp2[tid]; //Inverse of NVidia radix, account for b being !bit
 	int tmp_data = data[tid];
 	int tmp_key = keys[tid];
 	__syncthreads();
@@ -171,6 +148,7 @@ __device__ void radix_sort_by_key(int *keys, int *data, int *temp1, int *temp2) 
     }
 }
 
+//Test kernel to make sure utilities work, only used for debugging
 __global__ void test_kernel(int *test_int_data, short *test_short_data) {
     //Need blockdim of 256, one block
     __shared__ int test_int[1024];

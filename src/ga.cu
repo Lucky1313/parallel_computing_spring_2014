@@ -14,12 +14,21 @@
 
 using namespace std;
 
-#define TILE_WIDTH 1024
-#define POP_SIZE (1 << 18)
+//Used for autotuning
+#ifndef TILE_WIDTH
+    #define TILE_WIDTH 1024
+#endif
+#ifndef POP_SIZE
+    #define POP_SIZE (1 << 17)
+#endif
+#ifndef NUM_GEN
+    #define NUM_GEN 5000
+#endif
+
 #define NUM_BLOCKS POP_SIZE / TILE_WIDTH
-#define NUM_GEN 500
 #define MUTATION 30
 
+//Weights for fitness function
 #define MIGRATION_FREQ 0
 #define DISTANCE_WEIGHT 1
 #define ANGLE_WEIGHT 100
@@ -39,17 +48,19 @@ using namespace std;
 //TERMINALS - Always D-G-S
 __constant__ short node_layout[32000];
 
-//Probably a problem with pointers
+//Retrieve random integer in kernel
 __device__ int rand_int(curandState *state, int range) {
     return (int) (curand_uniform(state) * range);
 }
 
+//Set up a unique random generator for each thread
 __global__ void rand_setup_kernel(curandState *state) {
     int id = blockIdx.x*blockDim.x + threadIdx.x;
     unsigned int seed = (unsigned int) clock64();
     curand_init(seed + id, id, 0, &state[id]);
 }
 
+//Create random layout based off node data
 __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
     int id = blockIdx.x*blockDim.x + threadIdx.x;
     curandState local_state = state[id];
@@ -62,16 +73,19 @@ __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
     pop_mem[mem_offset+2] = rand_int(&local_state, node_layout[0] / 2);
     pop_mem[mem_offset+3] = node_layout[0] / 2;
 
+    //Inputs
     int off = 4;
     for (unsigned int i=0; i<node_layout[2]; ++i) {
 	pop_mem[mem_offset+2*i+off] = 0;
 	pop_mem[mem_offset+2*i+off+1] = rand_int(&local_state, node_layout[0] / 2);
     }
+    //Outputs
     off += node_layout[2] * 2;
     for (unsigned int i=0; i<node_layout[3]; ++i) {
 	pop_mem[mem_offset+2*i+off] = node_layout[0] / 2;
 	pop_mem[mem_offset+2*i+off+1] = rand_int(&local_state, node_layout[0] / 2);
     }
+    //Transistors
     off += node_layout[3] * 2;
     for (unsigned int i=off; i<node_layout[0]; i+=2) {
 	if ((i - off) % 6 == 0) {
@@ -88,9 +102,11 @@ __global__ void ga_populate_kernel(curandState *state, short *pop_mem) {
 	    pop_mem[mem_offset+i+1] = pop_mem[mem_offset+i-3] + 2;
 	}
     }
+    //Update random state
     state[id] = local_state;
 }
 
+//Fitness function
 __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, int id) {
     //Distance between connected terminals
     int offset = node_layout[5];
@@ -103,6 +119,8 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     short max_x = 0;
     short max_y = 0;
     short t, xdiff, ydiff;
+    //Calculates the distance between each terminal and all others in the same node
+    //and the number of turns a wire connecting them will have to make
     for (short i=0; i<node_layout[offset]; ++i) {
         size = node_layout[offset+i+1];
 	for (short j=0; j<size; ++j) {
@@ -114,6 +132,7 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
 	    for (short k=0; k<j; ++k) {
 		xdiff = x[j] - x[k];
 		ydiff = y[j] - y[k];
+                //Distance
 		dist += xdiff * xdiff + ydiff * ydiff;
 
 		//Angles
@@ -122,12 +141,14 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
 	    ++node_offset;
 	}
     }
+    //Weighting the calculated values
     angles = angles * ANGLE_WEIGHT;
     dist = dist * DISTANCE_WEIGHT;
 
     int overlap = 0;
     int off = mem_offset + (node_layout[2] + node_layout[3]) * 2 + 4;
     short x1, y1, x2, y2;
+    //Calculates the number of transistors that overlap
     for (unsigned int i=0; i<node_layout[4]; ++i) {
 	for (unsigned int j=i+1; j<node_layout[4]; ++j) {
 	    x1 = pop_mem[off+i*3];
@@ -165,23 +186,10 @@ __device__ float single_thread_fitness_func_mem(short* pop_mem, int mem_offset, 
     down = pos * pos * DOWN_WEIGHT;
     
     int value = dist + angles + overlap + left + right + up + down;
-    //Print some useful info
-    /*
-    if (id == 0)
-    {
-	printf("Thread 0\n");
-	printf("Layout dump: [");
-	for (int i=0; i<node_layout[0]/2; ++i) {
-	    printf("(%d, %d)", pop_mem[mem_offset+i*2], pop_mem[mem_offset+i*2+1]);
-	}
-	printf("]\n");
-	printf("Fitness function for thread %d: %d (%d, %d, %d, %d, %d, %d, %d)\n",
-	       id, value, dist, angles, overlap, left, right, up, down);
-    }
-    */
     return value;
 }
 
+//Performs a crossover between two individuals, keeping the transistors and the power/ground/input/outputs separate
 __device__ void crossover(curandState *state, short *pop_mem, short *temp_mem, int mem, int off1, int off2) {
 
     //IO Crossover
@@ -211,6 +219,7 @@ __device__ void crossover(curandState *state, short *pop_mem, short *temp_mem, i
     }
 }
 
+//Performs a mutation with the chance being specified by the MUTATION global parameter, out of 100
 __device__ void mutation(curandState *state, short *temp_mem, int mem_offset) {
 
     int chance = rand_int(state, 100);
@@ -224,6 +233,7 @@ __device__ void mutation(curandState *state, short *temp_mem, int mem_offset) {
 	    int dgs = ((pick - num_io * 2) / 2) % 3;
 	    int xy = pick % 2;
 	    int rand = rand_int(state, node_layout[0] / 2);
+	    //Modify the whole transistor to make sure they maintain the right positioning
 	    switch(dgs) {
 	    case 0:
 		temp_mem[mem_offset+pick] = rand;
@@ -248,6 +258,7 @@ __device__ void mutation(curandState *state, short *temp_mem, int mem_offset) {
     
 }
 
+//Simple in-kernel binary search, returning the node closest to but less than the 'point' value
 __device__ int bin_search(float *normalized_data, float point, int begin, int end) {
     int pivot = (end - begin) / 2 + begin;
     if (point >= normalized_data[pivot]) {
@@ -260,6 +271,7 @@ __device__ int bin_search(float *normalized_data, float point, int begin, int en
     }
 }
 
+//Genetic Algorithm kernel
 __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, short *best_mem, int *score_mem) {
     __shared__ int fit_scores[TILE_WIDTH];
     __shared__ int scores_id[TILE_WIDTH];
@@ -270,14 +282,16 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, s
     int tid = threadIdx.x;
     int id = blockIdx.x*blockDim.x + tid;
     int mem_offset = id * node_layout[0];
-    
+
+    //Obtain fitness scores for each thread/individual
     fit_scores[tid] = single_thread_fitness_func_mem(pop_mem, mem_offset, id);
     scores_id[tid] = tid;
     __syncthreads();
 
+    //Sort fitness functions least to greatest
     radix_sort_by_key(fit_scores, scores_id, temp1, temp2);
 
-    //Copy best to best memory
+    //Copy best layout to best memory if it is better than the previous best
     if (score_mem[blockIdx.x] > fit_scores[0] || score_mem[blockIdx.x] == 0) {
 	int best_id = scores_id[0];
 	if (tid == 0) {
@@ -303,6 +317,8 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, s
 	printf("]\n");
     }
     */
+    //Normalize and then scan the scores in order for roulette wheel choosing
+    //Slight variation on: http://en.wikipedia.org/wiki/Selection_(genetic_algorithm)
     temp1[tid] = fit_scores[tid];
     if (tid == 0) sum = 0;
     __syncthreads();
@@ -330,8 +346,7 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, s
 	printf("]\n");
     }
     */
-    //Selection
-    //Roulette wheel selection
+    //Pick two individuals for crossover
     curandState local_state = state[id];
     
     float pick1 = curand_uniform(&local_state);
@@ -354,20 +369,11 @@ __global__ void ga_kernel(curandState *state, short *pop_mem, short *temp_mem, s
     //Mutation
     mutation(&local_state, temp_mem, mem_offset);
 
+    //Return random state
     state[id] = local_state;
 }
 
-__global__ void ga_migration_kernel(short *pop_mem) {
-    
-}
-
-__global__ void ga_print_kernel(short *pop_mem) {
-    //int id = blockIdx.x*blockDim.x + threadIdx.x;
-    //int mem_offset = id * node_layout[0];
-
-    
-}
-
+//Kernel to select the best layout of all blocks 
 __global__ void champion_kernel(short *best_mem, int *score_mem) {
     //Copy to shared memory
     __shared__ int scores[NUM_BLOCKS];
@@ -378,8 +384,10 @@ __global__ void champion_kernel(short *best_mem, int *score_mem) {
     scores[tid] = score_mem[tid];
     scores_id[tid] = tid;
     __syncthreads();
+    //Sort by fitness scores
     radix_sort_by_key(scores, scores_id, temp1, temp2);
 
+    //Copy best score and layout to last position in array
     if (score_mem[NUM_BLOCKS] > scores[0] || score_mem[NUM_BLOCKS] == 0) {
 	if (tid == 0) {
 	    score_mem[NUM_BLOCKS] = scores[0];
@@ -393,6 +401,7 @@ __global__ void champion_kernel(short *best_mem, int *score_mem) {
     }
 }
 
+//Used for generating the position in memory based on the component
 int term_pos(Terminal *term, int offset_data, int offset_in, int offset_out) {
     switch(term->type) {
     case 'D':
@@ -415,6 +424,7 @@ int term_pos(Terminal *term, int offset_data, int offset_in, int offset_out) {
     }
 }
 
+//Create the array containing all the layout data based on the read file
 void create_node_data_array(Layout *main_layout, short *node_data, int offset_data, int offset_in, int offset_out) {
     Node* node;
     node_data[offset_data] = main_layout->nodes_size();
@@ -429,12 +439,14 @@ void create_node_data_array(Layout *main_layout, short *node_data, int offset_da
     }
 }
 
+//Genetic algorithm function launched from main file
 void launch_ga(Layout *main_layout) {
     //Specify block size
     const dim3 block_size(TILE_WIDTH);
     //Assume POP_SIZE is multiple of block size
-    const dim3 num_blocks(POP_SIZE/block_size.x);
+    const dim3 num_blocks(NUM_BLOCKS);
 
+    //Output some useful data
     int num_terminals = (main_layout->trans_size()) * 3;
     int offset_in = main_layout->in_size();
     int offset_out = main_layout->out_size();
@@ -497,25 +509,27 @@ void launch_ga(Layout *main_layout) {
     short *best_mem = 0;
     int *score_mem = 0;
 
+    //Memory allocation
     cudaMalloc((void**)&pop_mem, total_mem);
     cudaMalloc((void**)&temp_mem, total_mem);
     cudaMalloc((void**)&best_mem, (num_blocks.x+1) * per_copy_size);
     cudaMalloc((void**)&score_mem, (num_blocks.x+1) * sizeof(int));
 
+    //Copy node data to global for use in kernel
     cudaMemcpyToSymbol(node_layout, node_data, node_mem_size * sizeof(short));
 
     cudaMemset(score_mem, 0, (num_blocks.x+1) * sizeof(int));
 
     ga_populate_kernel<<<num_blocks, block_size>>>(rand_states, pop_mem);
 
+    //Call genetic algorithm twice, alternating storing the data in pop_mem and temp_mem
     for (int i=0; i<NUM_GEN; ++i) {
 	ga_kernel<<<num_blocks, block_size>>>(rand_states, pop_mem, temp_mem, best_mem, score_mem);
 	ga_kernel<<<num_blocks, block_size>>>(rand_states, temp_mem, pop_mem, best_mem, score_mem);
-	//if (i % 10 == 9) {
-	//    ga_migration_kernel<<<num_blocks, block_size>>>(pop_mem);
-	//}
     }
+    
     //printf("Calling champion kernel with: %d threads.\n", num_blocks.x);
+    //Find best layout of all blocks
     champion_kernel<<<1, num_blocks>>>(best_mem, score_mem);
     short *host_pop = 0;
     short *host_best = 0;
@@ -524,6 +538,7 @@ void launch_ga(Layout *main_layout) {
     host_best = (short*)malloc((num_blocks.x+1) * per_copy_size);
     host_scores = (int*)malloc((num_blocks.x+1) * sizeof(int));
 
+    //Copy data to host
     cudaMemcpy(host_pop, pop_mem, total_mem, cudaMemcpyDeviceToHost);
     cudaMemcpy(host_best, best_mem, (num_blocks.x+1) * per_copy_size, cudaMemcpyDeviceToHost);
     cudaMemcpy(host_scores, score_mem, (num_blocks.x+1) * sizeof(int), cudaMemcpyDeviceToHost);
@@ -535,20 +550,18 @@ void launch_ga(Layout *main_layout) {
     cout << "]" << endl;
     cout << "Best layout: [";
     int offset_best = NUM_BLOCKS * node_data[0];
-    for (unsigned int i=0; i<node_data[0]/2; ++i) {
+    for (unsigned int i=0; i<node_data[0]; i+=2) {
 	cout << "(" << host_best[offset_best+i] << ", " << host_best[offset_best+i+1] << "), ";
     }
     cout << "]" << endl;
 
-    int *test_int_data = 0;
-    short *test_short_data = 0;
-    cudaMalloc((void**)&test_int_data, 1024*sizeof(int));
-    cudaMalloc((void**)&test_short_data, 1024*sizeof(short));
-    
-    //cout << "Test kernel: " << endl;
-    //test_kernel<<<1, 1024>>>(test_int_data, test_short_data);
-    //cout << "Done kernel" << endl;
-    
+    int best = host_scores[NUM_BLOCKS];
+    if (best <= 0 || best >= 10000) {
+	best = 10000;
+    }
+    cout << best;
+
+    //Free memory
     free(host_pop);
     free(host_best);
     free(host_scores);
@@ -559,6 +572,5 @@ void launch_ga(Layout *main_layout) {
     cudaFree(score_mem);
     cudaFree(rand_states);
     
-    cout << "Done" << endl;
 }
 
