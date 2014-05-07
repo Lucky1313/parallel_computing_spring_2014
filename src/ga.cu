@@ -30,13 +30,13 @@ using namespace std;
 
 //Weights for fitness function
 #define MIGRATION_FREQ 0
-#define DISTANCE_WEIGHT 1
-#define ANGLE_WEIGHT 100
-#define OVERLAP_WEIGHT 100
-#define LEFT_WEIGHT 100
-#define RIGHT_WEIGHT 100
-#define UP_WEIGHT 100
-#define DOWN_WEIGHT 100
+#define DISTANCE_WEIGHT 10
+#define ANGLE_WEIGHT 10
+#define OVERLAP_WEIGHT 1000
+#define LEFT_WEIGHT 250
+#define RIGHT_WEIGHT 250
+#define UP_WEIGHT 250
+#define DOWN_WEIGHT 250
 
 //Data is as follows:
 //0 - size of each copy of data
@@ -473,6 +473,8 @@ void launch_ga(Layout *main_layout) {
     cout << "Size of float: " << sizeof(float) << " bytes" << endl;
     cout << "Size of layout copy: " << per_copy_size << " bytes" << endl;
     cout << "Total layout memory use: " << total_mem << " bytes" << endl;
+
+    cout << "Running for " << NUM_GEN*2 << " generations." << endl;
 
     int size = 0;
     Node* node;
